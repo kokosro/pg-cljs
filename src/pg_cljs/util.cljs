@@ -300,7 +300,7 @@
   (let [unknown (remove #(contains? allowed %) (keys m))]
     (when (seq unknown)
       (throw (config-error (str what ": unknown key(s) " (pr-str (vec unknown))
-                                "; allowed: " (pr-str (vec (sort allowed))))
+                                "; allowed: " (pr-str (vec (sort (keys allowed)))))
                            (assoc data :unknown (set unknown) :allowed (set (keys allowed)))))))
   m)
 

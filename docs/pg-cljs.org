@@ -6,13 +6,792 @@
 * Introduction
 
 =pg-cljs= is a thin, faithful ClojureScript (Node.js) wrapper of one external surface:
-[[https://node-postgres.com/][node-postgres]] (the =pg= npm package, 8.23.1). Its point is
-what you hand =pg= and what you get back: ClojureScript data.
+[[https://node-postgres.com/][node-postgres]] (the =pg= npm package, 8.23.1). A client
+or a pool is a configuration map; a query is a map of text and values; results,
+errors and notifications come back as ClojureScript data. Asynchronous operations
+return [[https://github.com/funcool/promesa][promesa]] promises; LISTEN/NOTIFY
+notifications and server notices arrive on core.async channels. The library has no
+runtime npm dependency beyond =pg=, confines every piece of JavaScript interop to one
+namespace (=pg-cljs.binding=), and decides nothing on the caller's behalf: no retries,
+no reconnection, no default timeouts, no type-parser override, no listener on the
+=error= event of a client or pool.
 
-This manual grows through development, alongside the surface: quick start, concepts,
-surface guides (client, pool, queries, notifications, types), gotchas as observed,
-testing and smoke, and the API reference of every public function. The external
-surface itself (what =pg= does, with sources) is the inventory,
-=docs/pg-api-inventory.org=.
+Four public namespaces:
 
-Today the library exposes =pg-cljs.core/api-version= only.
+| namespace         | holds                                                                         |
+|-------------------+-------------------------------------------------------------------------------|
+| =pg-cljs.core=    | =from-env=, =connect!=, =query!=, =transaction-status=, =end!=, =client?=, =api-version= |
+| =pg-cljs.pool=    | =pool!=, =connect!=, =query!=, =acquire!=, =release!=, =with-client!=, =status=, =end!=, =pool?=, the =pool-= aliases |
+| =pg-cljs.listen=  | =listen!=, =unlisten!=, =listening=, =notices!=, =default-buffer-size=, =listen-options= |
+| =pg-cljs.util=    | the translation tables, the validators, the error taxonomy, the promise adapter |
+
+The external surface itself, what =pg= does with the source each fact was taken from,
+is the inventory, =docs/pg-api-inventory.org=. This manual is about using the library.
+
+* Quick start
+
+Node.js 22+ and Java 11+ (for shadow-cljs). The library is consumed as a source
+dependency; the consuming app's =package.json= has =pg= 8.23.1.
+
+#+begin_src clojure
+;; deps.edn of the consuming app, next to a checkout
+{:deps {io.github.kokosro/pg-cljs {:local/root "../pg-cljs"}}}
+#+end_src
+
+The examples of the README run offline against a fake server (a scripted socket the
+real =pg= client speaks the wire protocol to):
+
+#+begin_src sh
+npm install
+npx shadow-cljs compile examples && node target/examples.js
+#+end_src
+
+The shape of every program:
+
+#+begin_src clojure
+(ns app.db
+  (:require [promesa.core :as p]
+            [pg-cljs.core :as pg]))
+
+(def config
+  {:host "db.example.test" :port 5432 :user "shop" :database "shop"
+   :application-name "shop-api" :connection-timeout-ms 5000})
+
+(p/let [client (pg/connect! config)
+        result (pg/query! client {:text   "SELECT id, name FROM products WHERE price_cents < $1"
+                                  :values [500]})
+        _      (pg/end! client)]
+  (:rows result))
+;; => [{"id" 1 "name" "pencil"} {"id" 2 "name" "notebook"}]
+#+end_src
+
+=(pg/from-env)= is the empty configuration: =pg= then reads =PGHOST=, =PGPORT=, =PGUSER=,
+=PGPASSWORD=, =PGDATABASE= (and the rest of the table in [[*Configuration translation]])
+for every key the map lacks. =(merge (pg/from-env) {:application-name "shop-api"})=
+overrides one variable.
+
+* Concepts
+
+** The client handle
+
+=connect!= resolves with an opaque handle (a record holding the =pg= Client and a state
+atom). It prints as =#pg-cljs/client{:host .. :port .. :database .. :user .. :status
+..}=: never the password. =client?= recognizes one. A handle has one life: once ended
+(=end!=, or the socket broke) it cannot reconnect; call =connect!= again for a new one.
+A client checked out of a pool (=acquire!=, =with-client!=) is the SAME handle type:
+=query!=, =transaction-status= and the =listen= functions work on it unchanged; its
+status is =:connected= while checked out and =:released= after =release!=.
+
+** One query at a time
+
+A PostgreSQL connection runs one command at a time, and =pg= queues a second
+=query= issued while one is active, printing a one-time deprecation warning because
+that queueing will go away. pg-cljs adds no queue of its own: sequence queries on one
+client with =p/let=, or use a pool, where each concurrent query gets its own client.
+A multi-statement simple query (several statements in one =:text=, no =:values=) is
+one round trip and resolves with a vector of result maps, one per statement.
+
+** Promises
+
+Every function whose name ends in =!= performs I/O and returns a promesa promise
+(=p/let=, =p/then=, =p/catch=, =p/finally=). Two functions are the exception by
+design: =pool!= allocates a pool without connecting and returns the handle
+synchronously, and =notices!= returns its channel synchronously because no SQL is
+involved. The synchronous functions (=transaction-status=, =client?=, =pool?=,
+=status=, =listening=, every =util= function) throw rather than reject.
+
+Everything the library throws before anything is sent (a bad configuration, a
+malformed command, a wrong handle) is thrown synchronously from the =!= functions as
+well, as a =:pg-cljs/config-error=. Evaluate the call inside a =p/let= and the throw
+arrives at the same =p/catch= as a rejection, as the =outcome= example of the README
+does.
+
+Every promise is built with =p/create= around the upstream promise; the library never
+chains off a shared resolved promise and never throws inside a =then= handler.
+
+** Channels
+
+A notification stream is a core.async channel with a sliding buffer of
+=default-buffer-size= (1024) maps, or =:buffer-size= when given. The buffer fills the
+moment a notification arrives, whether or not anyone takes from it; when it is full
+the OLDEST notification is dropped. Nothing is replayed: a notification sent while
+the connection was down, or dropped from a full buffer, is gone (PostgreSQL's own
+contract: NOTIFY is not queued across disconnects). A channel closes on =unlisten!=
+and when the connection ends. Closing it yourself stops delivery but sends no
+UNLISTEN.
+
+** Configuration translation
+
+Configuration keys and query options are kebab-case keywords, translated through
+explicit tables (=pg-cljs.util/client-config-keys=, =pool-only-keys=, =ssl-keys=,
+=query-keys=) to the names =pg= spells, which mix camelCase
+(=connectionTimeoutMillis=, =rowMode=) and snake_case (=statement_timeout=,
+=client_encoding=). A key outside the table is a =:pg-cljs/config-error= before
+anything is sent; =pg= itself would ignore it silently. Millisecond options end in
+=-ms= and are milliseconds upstream too.
+
+Resolution of each setting, upstream: the configuration value when it is truthy,
+then the =PG*= variable, then =pg='s default. A connection string's parsed parts are
+laid over the explicit keys, including parts the string does not contain.
+
+| key                                        | upstream                            | env fallback          | upstream default                  |
+|--------------------------------------------+-------------------------------------+-----------------------+-----------------------------------|
+| =:host=                                    | =host=                              | =PGHOST=              | =localhost=; a path = a Unix socket directory |
+| =:port=                                    | =port=                              | =PGPORT=              | 5432                              |
+| =:user=                                    | =user=                              | =PGUSER=              | the OS user                       |
+| =:password=                                | =password=                          | =PGPASSWORD=          | none                              |
+| =:database=                                | =database=                          | =PGDATABASE=          | the user                          |
+| =:connection-string=                       | =connectionString=                  | none                  | none                              |
+| =:ssl=                                     | =ssl=                               | =PGSSLMODE=           | off                               |
+| =:ssl-negotiation=                         | =sslnegotiation=                    | =PGSSLNEGOTIATION=    | ="postgres"=                      |
+| =:client-encoding=                         | =client_encoding=                   | =PGCLIENT_ENCODING=   | UTF8                              |
+| =:application-name=                        | =application_name=                  | =PGAPPNAME=           | none                              |
+| =:fallback-application-name=               | =fallback_application_name=         | none                  | none                              |
+| =:options=                                 | =options=                           | =PGOPTIONS=           | none                              |
+| =:statement-timeout-ms=                    | =statement_timeout=                 | none                  | none (server-side)                |
+| =:lock-timeout-ms=                         | =lock_timeout=                      | none                  | none (server-side)                |
+| =:idle-in-transaction-session-timeout-ms=  | =idle_in_transaction_session_timeout= | none                | none (server-side)                |
+| =:query-timeout-ms=                        | =query_timeout=                     | none                  | none (client-side read timeout)   |
+| =:connection-timeout-ms=                   | =connectionTimeoutMillis=           | none (=PGCONNECT_TIMEOUT= is read but drives nothing in the JavaScript client) | none |
+| =:keep-alive=                              | =keepAlive=                         | none                  | off                               |
+| =:keep-alive-initial-delay-ms=             | =keepAliveInitialDelayMillis=       | none                  | 0                                 |
+| =:types=                                   | =types=                             | none                  | =pg='s parsers                    |
+| =:stream=                                  | =stream=                            | none                  | a TCP socket                      |
+
+Pool keys, on top of the client keys: =:max= (10), =:min= (0), =:max-uses=
+(unlimited), =:max-lifetime-seconds= (0, off), =:idle-timeout-ms= (10000),
+=:allow-exit-on-idle= (false). An =:ssl= map takes =:reject-unauthorized :ca :key
+:cert :servername :passphrase :ciphers :min-version :max-version
+:check-server-identity=.
+
+** Values are never touched
+
+Column values are what =pg= yields, with its default parsers: =int2=, =int4=, =oid=,
+=float4=, =float8= as numbers; =int8= and =numeric= as STRINGS (a JavaScript number
+cannot hold every 64-bit integer or every decimal); =bool= as booleans; =bytea= as a
+Buffer; =json= and =jsonb= parsed; =date=, =timestamp= and =timestamptz= as Dates;
+=interval= as an object of its parts; =uuid=, =text=, =varchar=, =time=, =money=,
+=inet= and every other type as the server's text. Arrays of those types are
+JavaScript arrays of the element values. Column names are the exact strings the
+server sent.
+
+Parameter values are handed to =pg= as they are: strings, numbers, booleans and
+bigints go as their text (the server casts them from the statement's inferred
+types), =nil= as NULL, vectors as PostgreSQL array literals, Buffers as bytea bytes,
+Dates as local-time ISO strings with offset. A ClojureScript map or set among the
+values is refused as a =:pg-cljs/config-error=: =pg= would stringify it into text that
+is neither JSON nor a PostgreSQL literal. Pass JSON as a string.
+
+* The client (pg-cljs.core)
+
+#+begin_src clojure
+(p/let [client (pg/connect! {:host "localhost" :user "app" :database "shop" :password secret})
+        ;; one row per map, keyed by the column names the server sent
+        r1     (pg/query! client {:text "SELECT id, name FROM products WHERE id = $1" :values [7]})
+        ;; rows as vectors, in column order
+        r2     (pg/query! client {:text "SELECT id, name FROM products" :row-mode :array})
+        ;; a prepared statement: parsed once per connection, re-executed by name
+        r3     (pg/query! client {:name "by-id" :text "SELECT * FROM products WHERE id = $1" :values [7]})
+        r4     (pg/query! client {:name "by-id" :values [8]})
+        ;; several statements in one simple query: a vector of results
+        r5     (pg/query! client {:text "SELECT 1 AS a; SELECT 2 AS b"})
+        _      (pg/end! client)]
+  [(:rows r1) (:rows r2) (:row-count r3) (:rows r4) (mapv :rows r5)])
+#+end_src
+
+A result is ={:rows [...] :fields [...] :command "SELECT" :row-count 2 :oid nil}=:
+=:command= is the first word of the command tag, =:row-count= the count the tag
+carried or =nil= for tags without one (=LOCK=), =:oid= the inserted OID or =nil=,
+=:fields= a vector of ={:name :table-id :column-id :data-type-id :data-type-size
+:data-type-modifier :format}=.
+
+A connection string is a configuration too: =(pg/connect!
+"postgres://user:password@host:5432/db?application_name=app")=. Its parsed parts
+override the explicit keys, and =sslmode=, =sslcert=, =sslkey= and =sslrootcert= in it
+replace an =:ssl= map (the files named are read synchronously).
+
+Transactions are plain commands on one client: =BEGIN=, the statements, =COMMIT= or
+=ROLLBACK=. =transaction-status= reads, synchronously, the status the server reported
+with its last ReadyForQuery: =:idle=, =:in-transaction=, =:in-failed-transaction=
+(a command inside the block failed; every further command is rejected with SQLSTATE
+=25P02= until =ROLLBACK=), or =:unknown= before the first command.
+
+=end!= sends Terminate and resolves =nil= once the socket closed. It is idempotent.
+With a query active the socket is destroyed instead, and that query rejects with
+"Connection terminated". After =end!= every =query!= rejects with a
+=:pg-cljs/connect-error= ("Client was closed and is not queryable").
+
+* The pool (pg-cljs.pool)
+
+#+begin_src clojure
+(def pool (pool/pool! (assoc config :max 5 :idle-timeout-ms 30000)))
+
+(p/let [_  (pool/connect! pool)                       ; eager first connection, or fail fast
+        r  (pool/query! pool {:text "SELECT 1 AS n"})  ; one command on a free client
+        v  (pool/with-client! pool                     ; a dedicated client, released after
+             (fn [client]
+               (p/let [_ (pg/query! client {:text "BEGIN"})
+                       _ (pg/query! client {:text "UPDATE ..."})
+                       _ (pg/query! client {:text "COMMIT"})]
+                 :done)))
+        s  (pool/status pool)                          ; {:total-count :idle-count :waiting-count ...}
+        _  (pool/end! pool)]
+  [(:rows r) v s])
+#+end_src
+
+=pool!= allocates the pool synchronously and connects nothing: upstream connects one
+client per concurrent need up to =:max=, and ends idle clients above =:min= after
+=:idle-timeout-ms=. =connect!= checks a client out and back in, so a program can
+sequence "the database is reachable" before doing work. =query!= checks a client
+out, runs the one command, releases it: not for transactions, since successive
+calls may run on different clients.
+
+=acquire!= resolves with a dedicated client (queueing first-in first-out when the
+pool is full, rejecting after =:connection-timeout-ms= when set); =release!= returns
+it (=(release! client true)= ends and removes it instead). =with-client!= is
+=acquire!=, =(f client)=, =release!=, with the release guaranteed whether =f=
+resolves, rejects or throws, and =f= may release the client itself. A second
+=release!= of one checkout, or a =release!= of a client that was not checked out, is
+a =:pg-cljs/config-error=.
+
+=end!= ends every idle client at once and every checked-out one at its release,
+and resolves once the last one has been told to end. It is NOT idempotent: a second
+=end!= rejects ("Called end on pool more than once"), and every =acquire!= or
+=query!= after it rejects ("Cannot use a pool after calling end on the pool"), both
+as =:pg-cljs/connect-error=.
+
+Two namespaces referred into one file collide on =connect!=, =query!= and =end!=;
+the pool offers =pool-connect!=, =pool-query!=, =pool-end!= and =pool-status= as the
+same functions under non-colliding names.
+
+* LISTEN / NOTIFY (pg-cljs.listen)
+
+#+begin_src clojure
+(p/let [listener (pg/connect! config)
+        jobs     (listen/listen! listener "jobs")          ; a core.async channel
+        worker   (pg/connect! config)
+        _        (pg/query! worker {:text "SELECT pg_notify($1, $2)" :values ["jobs" "invoice-42"]})
+        job      (p/create (fn [resolve _] (async/take! jobs resolve)))
+        _        (listen/unlisten! listener "jobs")]
+  job)
+;; => {:process-id 4243 :channel "jobs" :payload "invoice-42"}
+#+end_src
+
+=listen!= attaches the upstream listener BEFORE sending =LISTEN=, so the first
+notification after the subscription is never missed, and resolves with the channel
+once the server confirmed. The name is sent quoted as an identifier (=LISTEN
+"jobs"=): matched exactly and case-sensitively. An unquoted =NOTIFY Jobs= reaches
+the lower-cased ="jobs"=; a mixed-case name needs =NOTIFY "Jobs"= or
+=pg_notify('Jobs', ..)=. Only notifications for the subscribed name reach the channel;
+=listen!= again for another name, or for the same name to get a second channel.
+=listening= is the set of names with open channels. =unlisten!= closes every channel
+of the name, then sends =UNLISTEN=.
+
+A LISTEN belongs to one physical connection. Use a =connect!= client of its own, or a
+client checked out of a pool and not released while listening: =pool/query!= may run
+each call on a different client, and a released client may be ended by the pool,
+taking the subscription with it. Notifications are delivered on the channel even
+while a query runs on the same connection; they never appear in query rows.
+
+=notices!= is the same kind of channel for the server's =RAISE NOTICE= / =WARNING= /
+=INFO= messages on a connection: maps of =:message=, =:severity=, =:code= and the other
+error-style fields sent. A notice is not an error and never rejects a query.
+
+* Errors
+
+Every rejection is an =ex-info= whose data carries =:type=, =:message= and =:op= (the
+operation: =:connect=, =:query=, =:end=, =:acquire=, =:release=, =:listen= ...), and
+=:cause= (the =pg= error) for the two I/O kinds:
+
+| =:type=                      | when                                                                                  | data                                                                           |
+|------------------------------+---------------------------------------------------------------------------------------+--------------------------------------------------------------------------------|
+| =:pg-cljs/config-error=      | an unknown key, a malformed command, a wrong handle, a second release; thrown before anything is sent | =:arg=, =:value=, =:unknown=, =:allowed=, =:index= as applicable |
+| =:pg-cljs/connect-error=     | the socket failed or the connection or pool is gone                                   | =:code :errno :syscall :address :port= for a socket error; SQLSTATE fields for a refused startup |
+| =:pg-cljs/query-error=       | the server rejected a query; the query read timeout elapsed                           | =:code= (the SQLSTATE), =:severity :detail :hint :position :schema :table :column :constraint :file :line :routine= as sent |
+| =:pg-cljs/unsupported-error= | the runtime is not Node.js                                                            | =:platform=                                                                    |
+
+=pg-cljs.util/error-type= and =error-data= read them off any value (nil for a
+non-pg-cljs error). An =ex-info= thrown by caller code (inside =with-client!=, say)
+passes through untouched. Messages generated by =pg= itself are kept verbatim
+("Connection terminated unexpectedly", "timeout expired", "Query read timeout",
+"Cannot use a pool after calling end on the pool").
+
+* Gotchas, as observed
+
+Each entry is a diagnosis: what you see, why, what to do.
+
+** The process dies with "Connection terminated unexpectedly" while nothing was running
+An idle connection broke (the server restarted, a firewall cut it). =pg= emits
+=error= on the client; a Node EventEmitter with no =error= listener throws, and the
+exception is uncaught. The library attaches no listener by design. Subscribe
+yourself when the process must survive: =(pg-cljs.binding/on (:js client) "error"
+(fn [err] ...))=; a pool emits =error= with the error and the removed client, same
+remedy on =(:js pool)=. After the event the client is not queryable: connect again.
+
+** A query after a read timeout seems stuck
+=:query-timeout-ms= is a client-side give-up: the query rejects with "Query read
+timeout", but no cancel is sent and the server keeps running the statement; the
+connection stays busy until it finishes, and the next query waits (the live smoke
+measures this with =pg_sleep=). For a server-side limit use =:statement-timeout-ms=
+(sent as a startup parameter; the server aborts the statement and the query rejects
+with SQLSTATE =57014=). For a connection you need back at once, =end!= it and
+connect again.
+
+** =connect!= never times out against a host that does not answer
+Nothing bounds the wait unless =:connection-timeout-ms= is set; =PGCONNECT_TIMEOUT= is
+read by =pg= but drives only the native libpq client, not the JavaScript one. Set
+the key. Note that the timer is unref'd: a process with nothing else alive (a test
+with a fake socket) can exit before it fires; a real TCP socket keeps the loop
+alive, so this bites fakes only.
+
+** Every failing =pool/query!= costs a reconnect
+When the one query fails, =pg= releases the client WITH the error, which removes it
+from the pool; the next call connects a new one (startup, authentication). A loop of
+failing queries is a loop of connections. Fix the query, or run the retrying logic
+on a client held with =with-client!=.
+
+** =numeric[]= loses digits, =numeric= does not
+Scalar =numeric= (OID 1700) has no parser and arrives as text; =numeric[]= (OID 1231)
+is parsed element-wise with =parseFloat=. Cast in SQL (=SELECT amounts::text[]=) or
+give the client a =:types= provider that returns the raw text for 1231. The library
+does not override parsers itself.
+
+** Timestamps are off by the zone offset, or lost their microseconds
+=timestamp= (without zone) and =date= are parsed as LOCAL time: the instant depends on
+=TZ= of the Node process. =timestamptz= honours its offset. All three truncate
+microseconds to milliseconds, since a Date holds milliseconds. =infinity= and
+=-infinity= come back as the numbers =Infinity= / =-Infinity=, not Dates. For exact
+values select the column as text (=::text=) or run with =TZ=UTC=.
+
+** =int8= and =numeric= arrive as strings
+By design: a JavaScript number holds integers exactly up to 2^53 only. Compare as
+strings or build a BigInt from the text; do not call =parseInt=. The same holds for
+=int8[]= (an array of strings). Totals and counts (=count(*)=) are =int8=.
+
+** A =:port 0=, an empty string or =false= in the configuration is ignored
+=pg= takes a configuration value only when it is truthy; a falsy value falls through
+to the environment variable and then the default. The library passes values
+through, so this is what the server sees.
+
+** A connection string overrides keys it does not even contain
+The parsed string is laid over the configuration map: a URL without a port yields
+=port ""=, which then falls through to =PGPORT= and 5432, whatever =:port= said.
+Give either a string or keys, not both.
+
+** =sslmode= in a connection string replaces the =:ssl= map
+Any of =sslmode=, =sslcert=, =sslkey=, =sslrootcert= in the string builds a fresh
+=ssl= object; =sslcert= / =sslkey= / =sslrootcert= read the named files
+synchronously; =prefer=, =require= and =verify-ca= are treated as =verify-full= with
+a one-time process warning. =PGSSLMODE= is consulted only when =:ssl= is absent.
+
+** A second =query!= on one client while one runs prints a deprecation warning
+=pg= queues it and warns once per process that the queueing is deprecated. Sequence
+with =p/let=, or use a pool.
+
+** A notification was never seen
+Four causes, in order of frequency: the channel name's case (=LISTEN "Jobs"= is not
+=NOTIFY jobs=); the subscription was on a pooled client that was released and ended
+by the pool; the consumer was slower than 1024 notifications and the oldest were
+dropped (the buffer is sliding; raise =:buffer-size= or drain faster); the
+connection was down when the NOTIFY happened (PostgreSQL does not queue it).
+
+** Closing a notification channel yourself does not stop the server
+=core.async/close!= on the channel stops delivery and detaches the upstream listener
+at the next notification, but sends no =UNLISTEN=: the server keeps pushing until
+=unlisten!= or =end!=.
+
+** The Node process does not exit
+A pool keeps idle clients and their timers alive until =end!=; =:allow-exit-on-idle
+true= unrefs them. A =connect!= client not ended keeps its socket open. An =acquire!=
+still queued when the pool was ended is never answered: set
+=:connection-timeout-ms= to bound it.
+
+** =end!= on a pool rejected
+A second =end!= of a pool rejects ("Called end on pool more than once"); a client's
+=end!= is idempotent and resolves again. End each pool once, in a =p/finally=.
+
+** A query inside a block fails with SQLSTATE =25P02=
+"current transaction is aborted, commands ignored until end of transaction block":
+an earlier statement in the block failed and =transaction-status= is
+=:in-failed-transaction=. =ROLLBACK= (then retry the block) is the only way out.
+
+** The error's =name= is "error" and its severity may be localized
+A server rejection is a =DatabaseError= whose =name= is the string ="error"=; the
+=:severity= is the server's localized =S= field (="ERROR"=, or ="FEHLER"= on a German
+server). Branch on =:code= (the SQLSTATE), never on the message or the severity.
+
+** A map among the =:values= is refused
+=pg= would =JSON.stringify= a ClojureScript map into its JavaScript object form, which
+is neither JSON nor a PostgreSQL literal. The library refuses it as a
+=:pg-cljs/config-error= before anything is sent. Pass JSON as a string
+(=(js/JSON.stringify (clj->js m))= in the application, or a JSON string you built),
+and arrays as vectors.
+
+* Testing and the live smoke
+
+** The offline suite
+
+#+begin_src sh
+npm install
+./run-tests.sh
+#+end_src
+
+The publicity gate (=test/publicity_gate.sh=) runs first: =src/= and =README.md= must
+carry no development-process narrative. Then the suite compiles
+(=npx shadow-cljs compile node-test --config-merge '{:autorun false}'=) and runs
+(=node target/node-test.js=). It is network-free: the REAL =pg= Client and Pool speak
+to a wire-protocol fake server (=test/pg_cljs/fake_server.cljs=, a Node Duplex handed
+in through =pg='s =stream= option) that answers from a script with the backend
+messages a server would send, records every query and pushes notifications and
+notices on demand. The one real socket opened goes to =127.0.0.1:9= to prove a
+refused connection is reported. Two tests hold the documentation to the code:
+
+- =examples_test.cljs= runs every function of =dev/pg_cljs/examples.cljs= and holds
+  =README.md= to it: every code block between a =README:begin= / =README:end= mark
+  stands in the README as written, every one-liner stands with its value, every
+  result the README prints is the result the example returns.
+- =api_index_test.cljs= reads the API reference below and the public vars of
+  =pg-cljs.core=, =pg-cljs.pool=, =pg-cljs.listen= and =pg-cljs.util= from the
+  compiler's analysis, and fails when either names something the other does not.
+
+** The examples
+
+#+begin_src sh
+npx shadow-cljs compile examples && node target/examples.js
+#+end_src
+
+Offline, against the fake server; prints what the README shows and exits 0.
+
+** The live smoke
+
+=dev/pg_cljs/smoke.cljs= runs every capability against a REAL PostgreSQL server that
+the person running it owns. It is run by hand, never by =run-tests.sh=:
+
+#+begin_src sh
+npx shadow-cljs compile smoke && node target/smoke.js
+#+end_src
+
+Connection settings come from the =PG*= variables (=PGHOST=, =PGPORT=, =PGUSER=,
+=PGPASSWORD=, =PGDATABASE=, =PGSSLMODE= when the server wants TLS), which =pg= reads
+itself; or =PG_CLJS_SECRETS_FILE= names a =NAME=value= file whose =PG*= entries fill in
+what the environment lacks (the environment wins; no file is read unless the variable
+is set; no value is printed):
+
+#+begin_src sh
+set -a; . <secrets-file>; set +a; node target/smoke.js
+PG_CLJS_SECRETS_FILE=<secrets-file> node target/smoke.js
+#+end_src
+
+The checks, each printing one =ok= or =FAIL= line, then a summary =<n> ok, <m> failed=
+and the exit code (0 when nothing failed):
+
+1. connect: =SELECT version()=, the handle is a client, status =:idle=;
+2. =CREATE TEMP TABLE pg_cljs_smoke= (session-scoped);
+3. insert / select roundtrip: an =int8= past 2^53 comes back as the same string, a
+   =bytea= as bytes (field OID 17, hex-encoded copy equal);
+4. a parameterized query, as maps and with =:row-mode :array=;
+5. =BEGIN= / =COMMIT= with =transaction-status= =:idle= → =:in-transaction= → =:idle=;
+6. =BEGIN= / =ROLLBACK= undoes an insert;
+7. a rejected statement puts the block in =:in-failed-transaction=, the next command
+   fails with =25P02=, =ROLLBACK= returns to =:idle=;
+8. a named prepared statement executes three times, the third by name alone;
+9. a pool: =connect!=, =query!=, =with-client!=, the counters, =end!=;
+10. LISTEN / NOTIFY from a second connection, with a payload and without (the empty
+    string), =listening= before and after =unlisten!=;
+11. =notices!= receives a =RAISE NOTICE=;
+12. a missing relation is a =query-error= with SQLSTATE =42P01=, the connection stays
+    usable;
+13. a query read timeout: =pg_sleep(1)= with =:query-timeout-ms 200= rejects with
+    "Query read timeout", and the next query on that connection waits for the sleep;
+14. cleanup: =DROP TABLE IF EXISTS pg_cljs_smoke=;
+15. =end!= resolves =nil= twice and the handle refuses queries after.
+
+Nothing that existed before the run is read, changed or dropped; the role needs to
+create temporary tables and LISTEN, nothing more. The process must exit on its own
+after the summary: one that stays alive has leaked a socket or a timer, which is a
+finding.
+
+* API reference
+
+Signatures and semantics of every public var. The docstrings in =src/pg_cljs/= carry
+the full detail of each.
+
+** pg-cljs.core
+
+**** pg-cljs.core/api-version
+=api-version= — the version of the pg-cljs public surface, a string (="0.1.0"=). Not
+the version of =pg=.
+
+**** pg-cljs.core/from-env
+=(from-env)= — ={}=: the configuration that makes =pg= read every setting from the
+=PG*= variables, then its defaults. Merge explicit keys over it to override.
+
+**** pg-cljs.core/connect!
+=(connect! config)= — opens a connection and resolves with a client handle once the
+server is ready. =config= is a map of =client-config-keys=, a connection string, or
+=nil= / ={}=. Rejects =:pg-cljs/connect-error= (socket error, timeout, closed during
+the handshake, refused startup); throws =:pg-cljs/config-error= for an unknown key.
+
+**** pg-cljs.core/query!
+=(query! client cmd)= — runs one command ={:text :values :name :row-mode :types
+:query-timeout-ms}= and resolves with ={:rows :fields :command :row-count :oid}=, or
+a vector of those for a multi-statement simple query. Rejects =:pg-cljs/query-error=
+(server rejection, read timeout) or =:pg-cljs/connect-error= (connection gone);
+throws =:pg-cljs/config-error= for a malformed command.
+
+**** pg-cljs.core/transaction-status
+=(transaction-status client)= — synchronously =:idle=, =:in-transaction=,
+=:in-failed-transaction= or =:unknown=, from the last ReadyForQuery status byte.
+
+**** pg-cljs.core/end!
+=(end! client)= — sends Terminate, resolves =nil= once the socket closed; idempotent.
+With a query active the socket is destroyed and the query rejects.
+
+**** pg-cljs.core/client?
+=(client? x)= — true for a client handle (of =connect!= or of a pool checkout).
+
+**** pg-cljs.core/check-client!
+=(check-client! op c)= — throws =:pg-cljs/config-error= (=:arg :client=, =:op op=)
+unless =c= is a client handle; shared with =pg-cljs.pool= and =pg-cljs.listen=.
+
+**** pg-cljs.core/Client
+=Client= — the record type of a client handle: fields =js= (the =pg= Client) and
+=state= (an atom with =:status= and the subscriptions). Opaque: read it through the
+functions above.
+
+**** pg-cljs.core/->Client
+=(->Client js state)= — the positional constructor of =Client=; used by
+=pg-cljs.pool/acquire!=. Not for application code: =connect!= and =acquire!= make
+handles.
+
+**** pg-cljs.core/map->Client
+=(map->Client m)= — the map constructor of =Client=, generated with the record. Not
+for application code.
+
+** pg-cljs.pool
+
+**** pg-cljs.pool/pool!
+=(pool! config)= — allocates a pool and returns its handle synchronously, without
+connecting. =config= is a map of =pool-config-keys=, a connection string, or =nil= /
+={}=. Throws =:pg-cljs/config-error= for an unknown key.
+
+**** pg-cljs.pool/connect!
+=(connect! pool)= — connects the first client eagerly (=acquire!= then =release!=) and
+resolves with the pool. Rejects =:pg-cljs/connect-error= as =acquire!= does.
+
+**** pg-cljs.pool/query!
+=(query! pool cmd)= — one command on whichever client is free, same =cmd= and result
+as =pg-cljs.core/query!=. A failed query removes its client from the pool. Not for
+transactions.
+
+**** pg-cljs.pool/acquire!
+=(acquire! pool)= — resolves with a dedicated client handle (queueing when the pool
+is full; rejecting after =:connection-timeout-ms= when set, or when the pool has
+ended).
+
+**** pg-cljs.pool/release!
+=(release! client)=, =(release! client destroy?)= — returns the client to the pool
+(=destroy?= truthy: ends and removes it); resolves =nil=. A second release of one
+checkout, or a client not from a pool, throws =:pg-cljs/config-error=.
+
+**** pg-cljs.pool/with-client!
+=(with-client! pool f)= — =acquire!=, =(f client)=, =release!=; resolves with what =f=
+returned (a promise awaited). The release happens whether =f= resolves, rejects or
+throws; =f= may release the client itself.
+
+**** pg-cljs.pool/status
+=(status pool)= — synchronously ={:total-count :idle-count :waiting-count
+:expired-count :ending? :ended? :max :min}=.
+
+**** pg-cljs.pool/end!
+=(end! pool)= — drains and ends the pool, resolving =nil=. Not idempotent: a second
+call rejects =:pg-cljs/connect-error=.
+
+**** pg-cljs.pool/pool?
+=(pool? x)= — true for a pool handle.
+
+**** pg-cljs.pool/pool-connect!
+=pool-connect!= — alias of =pg-cljs.pool/connect!= for files that refer both =core=
+and =pool=.
+
+**** pg-cljs.pool/pool-query!
+=pool-query!= — alias of =pg-cljs.pool/query!=.
+
+**** pg-cljs.pool/pool-end!
+=pool-end!= — alias of =pg-cljs.pool/end!=.
+
+**** pg-cljs.pool/pool-status
+=pool-status= — alias of =status=.
+
+**** pg-cljs.pool/Pool
+=Pool= — the record type of a pool handle: one field, =js= (the =pg= Pool). Prints
+host, port, database, user, =:max=, the counters and a status; never the password.
+
+**** pg-cljs.pool/->Pool
+=(->Pool js)= — the positional constructor of =Pool=, used by =pool!=. Not for
+application code.
+
+**** pg-cljs.pool/map->Pool
+=(map->Pool m)= — the map constructor of =Pool=, generated with the record. Not for
+application code.
+
+** pg-cljs.listen
+
+**** pg-cljs.listen/listen!
+=(listen! client channel-name)=, =(listen! client channel-name opts)= — subscribes the
+connection (=LISTEN "name"=, quoted) and resolves with a core.async channel of
+={:channel :payload :process-id}= maps; sliding buffer of =:buffer-size= (default
+1024). Rejects as =query!= does; throws =:pg-cljs/config-error= for a blank name, a
+bad option or a non-client.
+
+**** pg-cljs.listen/unlisten!
+=(unlisten! client channel-name)= — closes every channel of the name on this client,
+sends =UNLISTEN "name"=, resolves =nil=.
+
+**** pg-cljs.listen/listening
+=(listening client)= — synchronously the set of names with open =listen!= channels.
+
+**** pg-cljs.listen/notices!
+=(notices! client)=, =(notices! client opts)= — synchronously a core.async channel of
+the connection's notices (={:message :severity :code ...}=), same buffer semantics as
+=listen!=; closes when the connection ends.
+
+**** pg-cljs.listen/default-buffer-size
+=default-buffer-size= — 1024, the sliding-buffer size when =:buffer-size= is absent.
+
+**** pg-cljs.listen/listen-options
+=listen-options= — =#{:buffer-size}=, the options =listen!= and =notices!= accept.
+
+** pg-cljs.util
+
+Pure: no I/O, no interop. The tables are what the I/O namespaces translate through;
+the validators are what they run before sending; the constructors build the errors
+of the taxonomy.
+
+**** pg-cljs.util/client-config-keys
+=client-config-keys= — map of =connect!= key → upstream Client option name.
+
+**** pg-cljs.util/pool-only-keys
+=pool-only-keys= — map of the six pool keys → upstream Pool option name.
+
+**** pg-cljs.util/pool-config-keys
+=pool-config-keys= — =client-config-keys= merged with =pool-only-keys=.
+
+**** pg-cljs.util/ssl-keys
+=ssl-keys= — map of the keys of an =:ssl= map → Node =tls.connect= option name.
+
+**** pg-cljs.util/query-keys
+=query-keys= — map of command key (=:text :values :name :row-mode :types
+:query-timeout-ms=) → upstream query config field.
+
+**** pg-cljs.util/row-modes
+=row-modes= — =#{:array}=, the accepted =:row-mode= values.
+
+**** pg-cljs.util/result-keys
+=result-keys= — upstream Result property → result map key pairs (=command=,
+=rowCount=, =oid=).
+
+**** pg-cljs.util/field-keys
+=field-keys= — upstream Field property → field map key pairs.
+
+**** pg-cljs.util/error-field-keys
+=error-field-keys= — upstream DatabaseError / notice property → keyword pairs
+(=severity=, =code=, =detail=, =hint=, =position=, ...).
+
+**** pg-cljs.util/notification-keys
+=notification-keys= — upstream notification property → keyword pairs (=processId=,
+=channel=, =payload=).
+
+**** pg-cljs.util/transaction-statuses
+=transaction-statuses= — ={"I" :idle "T" :in-transaction "E" :in-failed-transaction}=.
+
+**** pg-cljs.util/transaction-status
+=(transaction-status s)= — the keyword for a status string; =:unknown= for =nil= or
+anything else.
+
+**** pg-cljs.util/error-types
+=error-types= — the set of the four =:type= keywords a pg-cljs error can carry.
+
+**** pg-cljs.util/config-error
+=(config-error message)=, =(config-error message data)= — an =ex-info= of
+=:pg-cljs/config-error= (message prefixed "pg-cljs: ", data merged with =:type= and
+=:message=).
+
+**** pg-cljs.util/connect-error
+=(connect-error message)=, =(connect-error message data)= — an =ex-info= of
+=:pg-cljs/connect-error=.
+
+**** pg-cljs.util/query-error
+=(query-error message)=, =(query-error message data)= — an =ex-info= of
+=:pg-cljs/query-error=.
+
+**** pg-cljs.util/unsupported-error
+=(unsupported-error message)=, =(unsupported-error message data)= — an =ex-info= of
+=:pg-cljs/unsupported-error=.
+
+**** pg-cljs.util/error-data
+=(error-data e)= — the ex-data of a pg-cljs error, =nil= for anything else.
+
+**** pg-cljs.util/error-type
+=(error-type e)= — one of =error-types=, or =nil=.
+
+**** pg-cljs.util/connect-config
+=(connect-config x)= — the map behind a =connect!= argument: =nil= → ={}=, a string →
+={:connection-string s}=, a map → itself; else throws =:pg-cljs/config-error=.
+
+**** pg-cljs.util/pool-config
+=(pool-config x)= — the same for a =pool!= argument (=:op :pool= in the error).
+
+**** pg-cljs.util/normalize-config
+=(normalize-config config)= — the map without its =nil=-valued entries.
+
+**** pg-cljs.util/check-config!
+=(check-config! config)= — returns =config=; throws =:pg-cljs/config-error= for a key
+outside =client-config-keys= or an =:ssl= key outside =ssl-keys=.
+
+**** pg-cljs.util/check-pool-config!
+=(check-pool-config! config)= — the same against =pool-config-keys=.
+
+**** pg-cljs.util/config->upstream
+=(config->upstream config)= — a validated client config → a map keyed by the upstream
+option names (strings); an =:ssl= map translated through =ssl-keys=; values verbatim.
+
+**** pg-cljs.util/pool-config->upstream
+=(pool-config->upstream config)= — the same through =pool-config-keys=.
+
+**** pg-cljs.util/check-query!
+=(check-query! cmd)= — returns =cmd=; throws =:pg-cljs/config-error= unless it is a map
+of =query-keys= with =:text= a string (or =:name= of a prepared statement), =:values=
+a vector without ClojureScript maps or sets, =:row-mode= in =row-modes=.
+
+**** pg-cljs.util/query->upstream
+=(query->upstream cmd)= — a validated command → a map keyed by the upstream query
+fields; =:row-mode :array= becomes ="rowMode" "array"=.
+
+**** pg-cljs.util/connection-gone-messages
+=connection-gone-messages= — the set of plain-Error messages with which =pg= rejects a
+query when the connection or pool is not there to run it; these classify as
+=:pg-cljs/connect-error=.
+
+**** pg-cljs.util/query-failure-kind
+=(query-failure-kind info)= — =:connect= or =:query= for the facts read off an error
+(=:database-error? :code :message=).
+
+**** pg-cljs.util/passthrough-error?
+=(passthrough-error? e)= — true for a pg-cljs error or any other =ex-info=: rethrown
+untouched by the normalizer.
+
+**** pg-cljs.util/normalize-failure
+=(normalize-failure kind op info-of e)= — the =ex-info= for a rejection: a
+passthrough error as is; otherwise a =connect-error= or a =query-error= built from
+=(info-of e)= plus =:cause= and =:op=.
+
+**** pg-cljs.util/run-op
+=(run-op normalize f)= — runs =f= (which may throw, and may return a promise) and
+returns a promesa promise settled with its outcome, every rejection passed through
+=normalize=. The one promise adapter of the library.
+
+**** pg-cljs.util/unwrap-env-value
+=(unwrap-env-value v)= — trims a string and strips ONE layer of wrapping (matching
+quotes or dashes); =nil= for blank or non-string input. For callers who read their
+own environment; the library does not apply it.

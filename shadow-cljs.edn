@@ -41,7 +41,10 @@
   ;; The LIVE smoke (dev/pg_cljs/smoke.cljs): every capability of the library
   ;; against a REAL PostgreSQL server that the person running it owns, with
   ;; the connection settings in the environment (PGHOST, PGUSER, PGPASSWORD,
-  ;; PGDATABASE, PGPORT). Run by hand, never by run-tests.sh:
+  ;; PGDATABASE, PGPORT), or in a NAME=value file named by PG_CLJS_SECRETS_FILE
+  ;; (its PG* entries fill in what the environment lacks). It creates one
+  ;; temporary table and drops it; nothing that existed before is touched.
+  ;; Run by hand, never by run-tests.sh:
   ;;   npx shadow-cljs compile smoke && node target/smoke.js
   :smoke {:target :node-script
           :main pg-cljs.smoke/main

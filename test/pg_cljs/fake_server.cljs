@@ -29,6 +29,7 @@
                    :command \"SELECT 2\"            ; the command tag; default SELECT n
                    :status \"I\"                    ; the ReadyForQuery status byte
                    :notifications [{:process-id 1 :channel \"c\" :payload \"p\"}]
+                   :notify-all [{:process-id 1 :channel \"c\" :payload \"p\"}] ; pushed on EVERY live connection, as a server delivers a NOTIFY to every connection that LISTENs
                    :notices [{:severity \"NOTICE\" :code \"00000\" :message \"hi\"}]
                    :delay-ms 50                    ; answer later than next tick
                    :silent? true}                  ; never answer (timeouts)
@@ -245,6 +246,15 @@
 ;; The fake socket
 ;; ---------------------------------------------------------------------------
 
+(declare notify!)
+
+(defn- broadcast!
+  "The :notify-all notifications of a spec, pushed on every live
+   connection of the server (the querying one included), after the answer."
+  [server spec]
+  (doseq [n (:notify-all spec)]
+    (notify! server n)))
+
 (defn- handle-message!
   "Dispatches one decoded frontend message."
   [server stream conn code body]
@@ -257,7 +267,8 @@
            (swap! (:queries server) conj q)
            (when-not (:silent? spec)
              (push-later! stream (buf-concat (answer-messages spec {:extended? false}))
-                          (:delay-ms spec))))
+                          (:delay-ms spec))
+             (broadcast! server spec)))
       ;; P: parse
       80 (let [{:keys [name text]} (decode-parse body)]
            (swap! conn assoc-in [:pending :parse] {:name name :text text})
@@ -279,7 +290,8 @@
            (swap! (:queries server) conj q)
            (when-not (:silent? spec)
              (push-later! stream (buf-concat (answer-messages spec {:extended? true :parsed? (some? parse)}))
-                          (:delay-ms spec))))
+                          (:delay-ms spec))
+             (broadcast! server spec)))
       ;; X: terminate
       88 (do (swap! (:terminated server) inc)
              (js/setImmediate (fn []
