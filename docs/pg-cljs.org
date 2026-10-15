@@ -1,0 +1,18 @@
+#+TITLE: pg-cljs Manual
+#+SUBTITLE: A ClojureScript (Node.js) PostgreSQL client library over pg (node-postgres); kebab maps in and out, promesa promises, core.async notification channels
+#+OPTIONS: toc:2 num:t ^:nil
+#+LANGUAGE: en
+
+* Introduction
+
+=pg-cljs= is a thin, faithful ClojureScript (Node.js) wrapper of one external surface:
+[[https://node-postgres.com/][node-postgres]] (the =pg= npm package, 8.23.1). Its point is
+what you hand =pg= and what you get back: ClojureScript data.
+
+This manual grows through development, alongside the surface: quick start, concepts,
+surface guides (client, pool, queries, notifications, types), gotchas as observed,
+testing and smoke, and the API reference of every public function. The external
+surface itself (what =pg= does, with sources) is the inventory,
+=docs/pg-api-inventory.org=.
+
+Today the library exposes =pg-cljs.core/api-version= only.

@@ -1,0 +1,17 @@
+{
+  "name": "pg-cljs",
+  "version": "0.1.0",
+  "description": "ClojureScript (Node.js) PostgreSQL client library over `pg` (node-postgres): a thin faithful wrapper of Client and Pool, LISTEN/NOTIFY and type parsing; kebab-case maps in/out, promesa promises, core.async channels for notifications; JS interop confined to one binding namespace",
+  "private": true,
+  "license": "Unlicense",
+  "scripts": {
+    "test": "./run-tests.sh"
+  },
+  "dependencies": {
+    "pg": "8.23.1"
+  },
+  "devDependencies": {
+    "shadow-cljs": "^2.28.23",
+    "source-map-support": "^0.5.21"
+  }
+}

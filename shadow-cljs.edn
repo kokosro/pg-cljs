@@ -1,0 +1,48 @@
+;; shadow-cljs configuration for pg-cljs.
+;; Standalone (no :deps) so `npx shadow-cljs ...` only needs Java + node_modules.
+;; promesa (pure ClojureScript, no npm package) is resolved from Clojars by the
+;; standalone shadow-cljs CLI via the :dependencies key below; deps.edn mirrors
+;; the same pin for the clojure CLI. core.async ships with shadow-cljs itself
+;; (used for the notification channels).
+;; The `pg` npm package (node-postgres) is required at runtime by the single
+;; binding namespace through a project-local `js/require`; shadow's :node-*
+;; targets leave npm requires external. `source-map-support` is picked up
+;; automatically by the generated node scripts when present (readable stack
+;; traces).
+{:source-paths ["src" "test" "dev"]
+ :dependencies [[funcool/promesa "12.0.1"]]
+ :builds
+ {;; Unit tests. `npx shadow-cljs compile node-test` compiles AND runs them (:autorun).
+  ;; NOTE: shadow's autorun does not propagate the test exit status, so ./run-tests.sh
+  ;; compiles with `--config-merge '{:autorun false}'` and runs `node target/node-test.js`.
+  ;; The suite is offline: the pg Client and Pool are faked, no PostgreSQL server,
+  ;; no network, no secrets.
+  :node-test {:target :node-test
+              :output-to "target/node-test.js"
+              :ns-regexp "-test$"
+              :autorun true}
+
+  ;; Interactive development build for a Node REPL:
+  ;;   npx shadow-cljs watch dev          ; terminal 1: compiles + hot reloads
+  ;;   node target/dev.js                 ; terminal 2: starts the Node runtime the REPL attaches to
+  ;;   npx shadow-cljs cljs-repl dev      ; terminal 3: REPL inside that Node process
+  :dev {:target :node-script
+        :main pg-cljs.dev/main
+        :output-to "target/dev.js"
+        :devtools {:enabled true}}
+
+  ;; The examples of the README (dev/pg_cljs/examples.cljs), OFFLINE: a fake
+  ;; pg client/pool answers from a table; no PostgreSQL server, no network:
+  ;;   npx shadow-cljs compile examples && node target/examples.js
+  :examples {:target :node-script
+             :main pg-cljs.examples/main
+             :output-to "target/examples.js"}
+
+  ;; The LIVE smoke (dev/pg_cljs/smoke.cljs): every capability of the library
+  ;; against a REAL PostgreSQL server that the person running it owns, with
+  ;; the connection settings in the environment (PGHOST, PGUSER, PGPASSWORD,
+  ;; PGDATABASE, PGPORT). Run by hand, never by run-tests.sh:
+  ;;   npx shadow-cljs compile smoke && node target/smoke.js
+  :smoke {:target :node-script
+          :main pg-cljs.smoke/main
+          :output-to "target/smoke.js"}}}
