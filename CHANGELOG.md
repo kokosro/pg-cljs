@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- The client surface: `connect!` (config map / connection string / `(from-env)`),
+  `query!` (command maps, parameterized values, `:row-mode :array`, named
+  statements, multi-statement results), `end!`, `client?`, the error taxonomy
+  (`:pg-cljs/config-error`, `:pg-cljs/connect-error`, `:pg-cljs/query-error`,
+  `:pg-cljs/unsupported-error`), the explicit config-key translation table and
+  the environment copy-paste defense in `pg-cljs.util`, the single JS-interop
+  namespace `pg-cljs.binding`, and the wire-protocol fake PostgreSQL server of
+  the offline suite.
+
 ## [0.1.0] - 2026-10-15
 
 ### Added

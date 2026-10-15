@@ -15,8 +15,8 @@
  {;; Unit tests. `npx shadow-cljs compile node-test` compiles AND runs them (:autorun).
   ;; NOTE: shadow's autorun does not propagate the test exit status, so ./run-tests.sh
   ;; compiles with `--config-merge '{:autorun false}'` and runs `node target/node-test.js`.
-  ;; The suite is offline: the pg Client and Pool are faked, no PostgreSQL server,
-  ;; no network, no secrets.
+  ;; The suite is offline: the real pg Client runs against a wire-protocol fake
+  ;; socket (pg's `stream` option), no PostgreSQL server, no network, no secrets.
   :node-test {:target :node-test
               :output-to "target/node-test.js"
               :ns-regexp "-test$"

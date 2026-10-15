@@ -11,9 +11,11 @@
 # shell, but nothing placed after the exec line inside this file would run).
 #
 # The tests never touch the network, a PostgreSQL server or a secrets file:
-# `npm install` (first run only) fetches the toolchain plus `pg`; the pg
-# Client and Pool are faked (recording JS objects and redefined binding vars),
-# so no database, connection string, password or socket is involved.
+# `npm install` (first run only) fetches the toolchain plus `pg`; the REAL pg
+# Client speaks to a wire-protocol fake socket (test/pg_cljs/fake_server.cljs,
+# handed in through pg's `stream` option), so no database, password or
+# network is involved — the one real socket opened goes to 127.0.0.1:9 to
+# prove a refused connection is reported.
 #
 # The publicity gate runs FIRST: src/ and README.md are public documentation.
 set -euo pipefail

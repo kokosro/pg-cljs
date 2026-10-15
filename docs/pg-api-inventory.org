@@ -755,24 +755,29 @@ a generic kebab→camel rule:
 | =:application-name=                  | =application_name=                     |
 | =:fallback-application-name=         | =fallback_application_name=            |
 | =:options=                           | =options=                              |
-| =:statement-timeout= =:lock-timeout= =:idle-in-transaction-session-timeout= =:query-timeout= | =statement_timeout= =lock_timeout= =idle_in_transaction_session_timeout= =query_timeout= |
-| =:connection-timeout-millis=         | =connectionTimeoutMillis=              |
-| =:keep-alive= =:keep-alive-initial-delay-millis= | =keepAlive= =keepAliveInitialDelayMillis= |
+| =:statement-timeout-ms= =:lock-timeout-ms= =:idle-in-transaction-session-timeout-ms= =:query-timeout-ms= | =statement_timeout= =lock_timeout= =idle_in_transaction_session_timeout= =query_timeout= (all milliseconds upstream; the =-ms= suffix is the house convention for millisecond options — corrected in Phase 1 from the =-millis= / bare spellings this table first had) |
+| =:connection-timeout-ms=             | =connectionTimeoutMillis=              |
+| =:keep-alive= =:keep-alive-initial-delay-ms= | =keepAlive= =keepAliveInitialDelayMillis= |
+| =:stream=                            | =stream= (the fake-socket seam of section 9; a Duplex or a factory function) |
 | =:types=                             | =types=                                |
 | =:max= =:min= =:max-uses= =:max-lifetime-seconds= =:idle-timeout-millis= =:allow-exit-on-idle= | =max= =min= =maxUses= =maxLifetimeSeconds= =idleTimeoutMillis= =allowExitOnIdle= |
 | =:on-connect=                        | =onConnect= (a fn of the client handle) |
-| query: =:text= =:values= =:name= =:row-mode= =:types= =:query-timeout= | =text= =values= =name= =rowMode= =types= =query_timeout= |
+| query: =:text= =:values= =:name= =:row-mode= =:types= =:query-timeout-ms= | =text= =values= =name= =rowMode= =types= =query_timeout= |
 | result: =:command= =:row-count= =:oid= =:rows= =:fields= | =command= =rowCount= =oid= =rows= =fields= |
 | field: =:name= =:table-id= =:column-id= =:data-type-id= =:data-type-size= =:data-type-modifier= =:format= | =name= =tableID= =columnID= =dataTypeID= =dataTypeSize= =dataTypeModifier= =format= |
 | notification: =:process-id= =:channel= =:payload= | =processId= =channel= =payload=  |
 | error / notice: =:severity= =:code= =:detail= =:hint= =:position= =:internal-position= =:internal-query= =:where= =:schema= =:table= =:column= =:data-type= =:constraint= =:file= =:line= =:routine= =:message= | camelCase names of 8.1 |
 
 Row objects: column NAMES are the caller's own SQL output names (aliases) and are
-user data, not wire codes — whether rows are keyed by keyword-as-written or by
-string, and whether =:row-mode :array= is the default, is a Phase 1 design decision
-to record in the manual; column VALUES are never re-cased or re-typed (int8 and
+user data, not wire codes. Phase 1 decision (implemented): rows are maps keyed by the
+EXACT column-name STRINGS =pg= yields (="price_cents"=, ="my col"=), never re-cased
+or keywordized; =:row-mode :array= is opt-in (rows as vectors) and the map form is
+the default, as upstream. Column VALUES are never re-cased or re-typed (int8 and
 numeric stay strings, Buffers stay Buffers, Dates stay Dates, JSON stays parsed JS
-objects unless a =:types= provider says otherwise).
+objects unless a =:types= provider says otherwise). The ssl map keys accepted are
+=:reject-unauthorized :ca :key :cert :servername :passphrase :ciphers :min-version
+:max-version :check-server-identity= (explicit table; anything else is a config
+error).
 
 ** 11.2 Results
 =query= resolves with ONE result map for one statement and a VECTOR of result maps
@@ -786,21 +791,35 @@ queue queries on one client beyond what the caller does (2.4.3 deprecation); the
 docs say one query at a time per client, sequence with =p/let= or use the pool.
 
 ** 11.4 Events and channels
-The binding attaches an =error= listener to every Client and Pool it creates (an
-unhandled =error= event crashes Node). =notification= (and optionally =notice=) become
+Phase 1 decision (supersedes the next sentence for now): the library attaches NO
+=error= listener of its own; upstream EventEmitter semantics stay upstream semantics
+(an unhandled =error= event throws), tests subscribe through the binding's =on= /
+=once= / =off= helpers, and the events / notifications channel design of Phase 2
+decides where the listener lives. Original plan: the binding attaches an =error=
+listener to every Client and Pool it creates (an unhandled =error= event crashes
+Node). =notification= (and optionally =notice=) become
 a core.async channel per client with a sliding buffer of 1024 by default
 (=:buffer= option), delivering the kebab maps of 11.1; =end= closes the channel.
 Pool events surface as one events channel per pool with =:event= =:connect= /
 =:acquire= / =:release= / =:remove= / =:error= maps.
 
 ** 11.5 Errors
-One taxonomy, =:type= under =:pg-cljs/=: =database-error= (a =DatabaseError=: all 8.1
-fields kebab-cased, =:code= as the SQLSTATE string, =:cause= the upstream error),
-=connection-error= (socket errors with =:code=, the termination / timeout strings of
-8.3 with =:reason=, =:host= / =:port=), =pool-error= (release twice, after end, queue
-timeout), =argument-error= (validation before anything upstream is called: values
-not a vector, no text, bad option key), =config-error= (missing / malformed
-connection settings resolved from the env). Synchronous upstream throws (2.4.1, 2.1,
+Phase 1 decision (implemented, replaces the Phase 0 sketch that followed): ONE
+taxonomy, =:type= under =:pg-cljs/=: =config-error= (bad / unknown config key, wrong
+argument shape — a bare string command, =:values= not a vector, a CLJS map among the
+values, a non-client handle; raised BEFORE anything is sent; data =:message= plus
+=:arg= / =:value= / =:unknown= / =:allowed= / =:index= / =:op=), =connect-error=
+(connection failures and a connection that is gone: ECONNREFUSED and other socket
+errors with their =:code :errno :syscall :address :port=, ="timeout expired"=, the
+startup =DatabaseError= of a failed authentication with its SQLSTATE fields,
+="Connection terminated"= / ="… unexpectedly"=, ="Client was closed and is not
+queryable"= / ="… has encountered a connection error …"= when a query is attempted;
+data =:message :cause :op= plus the upstream fields present), =query-error= (a
+=DatabaseError= rejecting a query — every 8.1 field keywordized, =:code= the SQLSTATE
+string verbatim — and ="Query read timeout"=; data =:message :cause :op= plus the
+fields present), =unsupported-error= (not Node.js). Pool errors are a Phase 2 matter.
+Phase 0 sketch, for the record: =database-error=, =connection-error=, =pool-error=,
+=argument-error=, =config-error=. Synchronous upstream throws (2.4.1, 2.1,
 3.2) are caught and rejected / rethrown as these. No default type-parser override
 (=parseInt8= stays off), no retries, no invented timeouts: every timeout is the
 caller's option with upstream's default (none).

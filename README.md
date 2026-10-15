@@ -11,8 +11,13 @@ reinterpreted.
 
 This README grows into the full shape shared by the sibling libraries
 (requirements, an offline quick start, going live, scenarios, pure helpers, the error
-taxonomy, features, settings, documentation and layout) as the surface is built; for
-now the library exposes its version marker only.
+taxonomy, features, settings, documentation and layout) as the surface is built. The
+client surface is in place: `connect!` (a config map of kebab-case keys, a
+connection string, or `(from-env)` to let `pg` read the `PG*` variables), `query!`
+(a command map `{:text "..." :values [...]}`, resolving `{:rows :fields :command
+:row-count :oid}` with rows keyed by the exact column names) and `end!`; every
+rejection is an `ex-info` whose `:type` is `:pg-cljs/config-error`,
+`:pg-cljs/connect-error`, `:pg-cljs/query-error` or `:pg-cljs/unsupported-error`.
 
 ## Requirements
 
