@@ -30,6 +30,11 @@
             :types "types"
             :stream "stream"}
            util/client-config-keys)))
+  (testing "pool keys are the client keys plus the pool-only ones, -ms for milliseconds"
+    (is (= {:max "max" :min "min" :max-uses "maxUses" :max-lifetime-seconds "maxLifetimeSeconds"
+            :idle-timeout-ms "idleTimeoutMillis" :allow-exit-on-idle "allowExitOnIdle"}
+           util/pool-only-keys))
+    (is (= (merge util/client-config-keys util/pool-only-keys) util/pool-config-keys)))
   (testing "query command keys"
     (is (= {:text "text" :values "values" :name "name" :row-mode "rowMode"
             :types "types" :query-timeout-ms "query_timeout"}
@@ -43,7 +48,13 @@
     (is (= [:severity :code :detail :hint :position :internal-position :internal-query :where
             :schema :table :column :data-type :constraint :file :line :routine]
            (mapv second util/error-field-keys)))
-    (is (= [:process-id :channel :payload] (mapv second util/notification-keys)))))
+    (is (= [:process-id :channel :payload] (mapv second util/notification-keys))))
+  (testing "the ReadyForQuery status byte"
+    (is (= {"I" :idle "T" :in-transaction "E" :in-failed-transaction} util/transaction-statuses))
+    (is (= :idle (util/transaction-status "I")))
+    (is (= :in-failed-transaction (util/transaction-status "E")))
+    (is (= :unknown (util/transaction-status nil)))
+    (is (= :unknown (util/transaction-status "X")))))
 
 ;; ---------------------------------------------------------------------------
 ;; Configuration
@@ -56,6 +67,34 @@
   (let [d (thrown-data #(util/connect-config 42))]
     (is (= :pg-cljs/config-error (:type d)))
     (is (= {:arg :config :value 42 :op :connect} (select-keys d [:arg :value :op])))))
+
+(deftest pool-config-accepts-nil-string-map
+  (is (= {} (util/pool-config nil)))
+  (is (= {:connection-string "postgres://u@h/d"} (util/pool-config "postgres://u@h/d")))
+  (is (= {:max 2} (util/pool-config {:max 2})))
+  (let [d (thrown-data #(util/pool-config 42))]
+    (is (= :pg-cljs/config-error (:type d)))
+    (is (= {:arg :config :value 42 :op :pool} (select-keys d [:arg :value :op])))))
+
+(deftest check-pool-config-accepts-client-and-pool-keys
+  (is (= {:host "h" :max 2 :idle-timeout-ms 0} (util/check-pool-config! {:host "h" :max 2 :idle-timeout-ms 0})))
+  (let [d (thrown-data #(util/check-pool-config! {:max 2 :idleTimeoutMillis 5 :on-connect identity}))]
+    (is (= :pg-cljs/config-error (:type d)))
+    (is (= #{:idleTimeoutMillis :on-connect} (:unknown d)))
+    (is (= (set (keys util/pool-config-keys)) (:allowed d)))
+    (is (= [:config :pool] [(:arg d) (:op d)])))
+  (testing "the client validator does not accept pool keys"
+    (is (= #{:max} (:unknown (thrown-data #(util/check-config! {:max 2}))))))
+  (testing "an :ssl map is checked too"
+    (is (= [:ssl :pool] (let [d (thrown-data #(util/check-pool-config! {:ssl {:bogus 1}}))] [(:arg d) (:op d)])))))
+
+(deftest pool-config-translation
+  (is (= {"host" "h" "max" 5 "min" 1 "maxUses" 100 "maxLifetimeSeconds" 60
+          "idleTimeoutMillis" 0 "allowExitOnIdle" true "connectionTimeoutMillis" 300
+          "ssl" {"rejectUnauthorized" false}}
+         (util/pool-config->upstream {:host "h" :max 5 :min 1 :max-uses 100 :max-lifetime-seconds 60
+                                      :idle-timeout-ms 0 :allow-exit-on-idle true
+                                      :connection-timeout-ms 300 :ssl {:reject-unauthorized false}}))))
 
 (deftest normalize-config-drops-nils-only
   (is (= {} (util/normalize-config nil)))
@@ -134,7 +173,28 @@
   (is (= :connect (util/query-failure-kind {:message "Client was closed and is not queryable"})))
   (is (= :connect (util/query-failure-kind {:message "Connection terminated"})))
   (is (= :connect (util/query-failure-kind {:message "Connection terminated unexpectedly"})))
-  (is (= :connect (util/query-failure-kind {:code "ECONNRESET" :message "read ECONNRESET"}))))
+  (is (= :connect (util/query-failure-kind {:code "ECONNRESET" :message "read ECONNRESET"})))
+  (testing "the pool's own messages"
+    (is (= :connect (util/query-failure-kind {:message "Cannot use a pool after calling end on the pool"})))
+    (is (= :connect (util/query-failure-kind {:message "timeout exceeded when trying to connect"})))
+    (is (= :connect (util/query-failure-kind {:message "Connection terminated due to connection timeout"})))))
+
+(deftest normalize-failure-and-run-op
+  (let [info-of (fn [e] {:message (ex-message e) :code (:code (ex-data e))})]
+    (testing "a pg-cljs error or any ex-info passes through untouched"
+      (let [e (util/config-error "bad")]
+        (is (identical? e (util/normalize-failure :query :query info-of e))))
+      (let [e (ex-info "mine" {:k 1})]
+        (is (identical? e (util/normalize-failure :connect :connect info-of e)))))
+    (testing ":connect kind always builds a connect-error"
+      (let [d (ex-data (util/normalize-failure :connect :acquire info-of (js/Error. "refused")))]
+        (is (= [:pg-cljs/connect-error "refused" :acquire] [(:type d) (:message d) (:op d)]))
+        (is (instance? js/Error (:cause d)))))
+    (testing ":query kind classifies by the message"
+      (is (= :pg-cljs/query-error
+             (:type (ex-data (util/normalize-failure :query :query info-of (js/Error. "Query read timeout"))))))
+      (is (= :pg-cljs/connect-error
+             (:type (ex-data (util/normalize-failure :query :query info-of (js/Error. "Connection terminated")))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Errors

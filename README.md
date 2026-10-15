@@ -15,8 +15,18 @@ taxonomy, features, settings, documentation and layout) as the surface is built.
 client surface is in place: `connect!` (a config map of kebab-case keys, a
 connection string, or `(from-env)` to let `pg` read the `PG*` variables), `query!`
 (a command map `{:text "..." :values [...]}`, resolving `{:rows :fields :command
-:row-count :oid}` with rows keyed by the exact column names) and `end!`; every
-rejection is an `ex-info` whose `:type` is `:pg-cljs/config-error`,
+:row-count :oid}` with rows keyed by the exact column names), `end!` and
+`transaction-status` (`:idle`, `:in-transaction`, `:in-failed-transaction`). Pools
+live in `pg-cljs.pool`: `pool!` (the client keys plus `:max :min :max-uses
+:max-lifetime-seconds :idle-timeout-ms :allow-exit-on-idle`), `connect!` (eager
+first connection), `query!` (one command on a free client), `acquire!` / `release!`
+/ `with-client!` (a dedicated client, the same handle as a `connect!` client, for
+transactions and LISTEN), `status` (the live counters) and `end!`. LISTEN/NOTIFY
+lives in `pg-cljs.listen`: `listen!` resolves with a core.async channel of
+`{:channel :payload :process-id}` maps (sliding buffer of 1024 by default, the
+`:buffer-size` option; the oldest notification is dropped when it is full),
+`unlisten!` sends UNLISTEN and closes it, `notices!` is the same for server
+notices. Every rejection is an `ex-info` whose `:type` is `:pg-cljs/config-error`,
 `:pg-cljs/connect-error`, `:pg-cljs/query-error` or `:pg-cljs/unsupported-error`.
 
 ## Requirements

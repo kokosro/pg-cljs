@@ -760,8 +760,8 @@ a generic kebab→camel rule:
 | =:keep-alive= =:keep-alive-initial-delay-ms= | =keepAlive= =keepAliveInitialDelayMillis= |
 | =:stream=                            | =stream= (the fake-socket seam of section 9; a Duplex or a factory function) |
 | =:types=                             | =types=                                |
-| =:max= =:min= =:max-uses= =:max-lifetime-seconds= =:idle-timeout-millis= =:allow-exit-on-idle= | =max= =min= =maxUses= =maxLifetimeSeconds= =idleTimeoutMillis= =allowExitOnIdle= |
-| =:on-connect=                        | =onConnect= (a fn of the client handle) |
+| =:max= =:min= =:max-uses= =:max-lifetime-seconds= =:idle-timeout-ms= =:allow-exit-on-idle= | =max= =min= =maxUses= =maxLifetimeSeconds= =idleTimeoutMillis= =allowExitOnIdle= (Phase 2: =-ms= as for every millisecond option; =:connection-timeout-ms= is the same client key, which pg-pool also uses as the queue-wait timeout) |
+| (not offered)                        | =onConnect= / =verify= / =log= / =Client= / =Promise= / =poolSize=: Phase 2 decision — =onConnect= and =verify= are JavaScript callback hooks that receive the RAW pg Client before it is handed out; wrapping them would put a JS object in caller code (no interop at call sites) or require a second handle construction path for a client the pool still owns. A caller who needs per-connection setup runs it on the client =acquire!= hands out (or in =with-client!=). =log= is a debug hook, =Client= / =Promise= swap implementations, =poolSize= is the legacy spelling of =max=. An unknown key is a =config-error= before anything is sent. |
 | query: =:text= =:values= =:name= =:row-mode= =:types= =:query-timeout-ms= | =text= =values= =name= =rowMode= =types= =query_timeout= |
 | result: =:command= =:row-count= =:oid= =:rows= =:fields= | =command= =rowCount= =oid= =rows= =fields= |
 | field: =:name= =:table-id= =:column-id= =:data-type-id= =:data-type-size= =:data-type-modifier= =:format= | =name= =tableID= =columnID= =dataTypeID= =dataTypeSize= =dataTypeModifier= =format= |
@@ -791,6 +791,17 @@ queue queries on one client beyond what the caller does (2.4.3 deprecation); the
 docs say one query at a time per client, sequence with =p/let= or use the pool.
 
 ** 11.4 Events and channels
+Phase 2 decision (implemented): still NO library =error= listener on Clients or
+Pools (upstream EventEmitter semantics stay upstream semantics; the pool and
+listen docstrings say so and point at =pg-cljs.binding/on=). =notification=
+becomes a core.async channel PER LISTEN NAME through =pg-cljs.listen/listen!=
+(sliding buffer 1024, =:buffer-size= option, oldest dropped; the name is sent
+quoted with =escapeIdentifier= so it is matched exactly; =unlisten!= sends
+UNLISTEN and closes; the channel closes on =end=). =notice= is a SEPARATE channel
+(=notices!=, same buffer semantics): a notice belongs to the connection, not to a
+LISTEN name, so it is not mixed into a notification channel. No pool events
+channel: the five pool events are reachable with =binding/on= on =(:js pool)=;
+a channel for them is deferred until a caller needs one.
 Phase 1 decision (supersedes the next sentence for now): the library attaches NO
 =error= listener of its own; upstream EventEmitter semantics stay upstream semantics
 (an unhandled =error= event throws), tests subscribe through the binding's =on= /
@@ -817,7 +828,14 @@ queryable"= / ="… has encountered a connection error …"= when a query is att
 data =:message :cause :op= plus the upstream fields present), =query-error= (a
 =DatabaseError= rejecting a query — every 8.1 field keywordized, =:code= the SQLSTATE
 string verbatim — and ="Query read timeout"=; data =:message :cause :op= plus the
-fields present), =unsupported-error= (not Node.js). Pool errors are a Phase 2 matter.
+fields present), =unsupported-error= (not Node.js). Pool errors (Phase 2,
+implemented): no new type. "Cannot use a pool after calling end on the pool",
+"timeout exceeded when trying to connect", "Connection terminated due to
+connection timeout" and "Called end on pool more than once" are =connect-error=
+(the pool or a connection is gone / unobtainable; =:op= =:acquire= / =:query= /
+=:end=); a failed =pool.query= is classified exactly as a client =query!=; a
+second =release!= of one checkout and a =release!= of a non-pooled client are
+=config-error= (refused before upstream's synchronous throw).
 Phase 0 sketch, for the record: =database-error=, =connection-error=, =pool-error=,
 =argument-error=, =config-error=. Synchronous upstream throws (2.4.1, 2.1,
 3.2) are caught and rejected / rethrown as these. No default type-parser override

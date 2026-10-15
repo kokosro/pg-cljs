@@ -1,7 +1,8 @@
 (ns pg-cljs.binding
   "The single JavaScript-interop namespace of pg-cljs: it requires `pg`
    (node-postgres) lazily from the project's node_modules, constructs
-   Clients, invokes connect / query / end, subscribes to Client events,
+   Clients and Pools, invokes connect / query / end / release, reads the
+   pool counters, subscribes to Client and Pool events,
    reads properties off upstream errors, and converts the fixed-shape
    upstream envelopes (configuration keys, the Result object, Field
    metadata, DatabaseError fields, notification and notice messages) to
@@ -150,33 +151,111 @@
   (let [s (js-invoke client "getTransactionStatus")]
     (when (some? s) s)))
 
+(def ^:private connection-facts
+  [["host" :host] ["port" :port] ["database" :database] ["user" :user]])
+
 (defn client-info
   "The non-secret connection facts of a Client: {:host :port :database
    :user} (the password is not read)."
   [client]
-  (props->map [["host" :host] ["port" :port] ["database" :database] ["user" :user]]
-              client))
+  (props->map connection-facts client))
+
+(defn escape-identifier
+  "`pg.escapeIdentifier(s)`: the string double-quoted as a SQL identifier
+   with inner double quotes doubled, so it names exactly that channel or
+   relation, case preserved."
+  [s]
+  (js-invoke (pg-module) "escapeIdentifier" s))
+
+;; ---------------------------------------------------------------------------
+;; Pool construction and invocation
+;; ---------------------------------------------------------------------------
+
+(defn make-pool
+  "`new pg.Pool(options)`. Never connects; the whole options object is
+   handed to every Client the pool creates."
+  [js-options]
+  (let [ctor (unchecked-get (pg-module) "Pool")]
+    (new ctor js-options)))
+
+(defn pool-connect
+  "`pool.connect()`: the native promise of a checked-out Client that
+   carries its own `release` function."
+  [pool]
+  (js-invoke pool "connect"))
+
+(defn pool-query
+  "`pool.query(config)`: the native promise of the Result; the pool checks
+   a client out, runs the one query and releases it (with the error when
+   the query failed, which removes that client from the pool)."
+  [pool js-cmd]
+  (js-invoke pool "query" js-cmd))
+
+(defn pool-end
+  "`pool.end()`: the native promise resolving with undefined once every
+   client of the pool has been told to end."
+  [pool]
+  (js-invoke pool "end"))
+
+(defn pool-release
+  "`client.release()` of a checked-out pooled Client, or
+   `client.release(v)` when `v` is non-nil (a truthy value: the client is
+   ended and removed instead of returned to the idle set). Synchronous;
+   returns nil. Upstream THROWS a plain Error on a second release of the
+   same checkout."
+  [client v]
+  (if (some? v)
+    (js-invoke client "release" v)
+    (js-invoke client "release"))
+  nil)
+
+(defn pool-counts
+  "The live counters of a Pool as data: {:total-count :idle-count
+   :waiting-count :expired-count :ending? :ended?} (totalCount, idleCount,
+   waitingCount, expiredCount, ending, ended)."
+  [pool]
+  {:total-count (prop pool "totalCount")
+   :idle-count (prop pool "idleCount")
+   :waiting-count (prop pool "waitingCount")
+   :expired-count (prop pool "expiredCount")
+   :ending? (boolean (prop pool "ending"))
+   :ended? (boolean (prop pool "ended"))})
+
+(defn pool-info
+  "The non-secret facts of a Pool's resolved options: {:host :port
+   :database :user :max :min :max-uses :max-lifetime-seconds
+   :idle-timeout-ms :allow-exit-on-idle} for the ones present (the
+   password is not read; upstream also hides it from enumeration)."
+  [pool]
+  (props->map (into connection-facts
+                    [["max" :max] ["min" :min] ["maxUses" :max-uses]
+                     ["maxLifetimeSeconds" :max-lifetime-seconds]
+                     ["idleTimeoutMillis" :idle-timeout-ms]
+                     ["allowExitOnIdle" :allow-exit-on-idle]])
+              (prop pool "options")))
 
 ;; ---------------------------------------------------------------------------
 ;; Events
 ;; ---------------------------------------------------------------------------
 
 (defn on
-  "`client.on(event, f)`; returns f (the listener to remove later)."
-  [client event f]
-  (js-invoke client "on" event f)
+  "`emitter.on(event, f)` on a Client or a Pool; returns f (the listener to
+   remove later)."
+  [emitter event f]
+  (js-invoke emitter "on" event f)
   f)
 
 (defn once
-  "`client.once(event, f)`; returns f."
-  [client event f]
-  (js-invoke client "once" event f)
+  "`emitter.once(event, f)`; returns f."
+  [emitter event f]
+  (js-invoke emitter "once" event f)
   f)
 
 (defn off
-  "`client.removeListener(event, f)`; returns nil."
-  [client event f]
-  (js-invoke client "removeListener" event f)
+  "`emitter.removeListener(event, f)`; returns nil. Works for a listener
+   attached with once too."
+  [emitter event f]
+  (js-invoke emitter "removeListener" event f)
   nil)
 
 ;; ---------------------------------------------------------------------------

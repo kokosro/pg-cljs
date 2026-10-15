@@ -8,7 +8,10 @@
    Pure: no I/O and no JavaScript interop. Turning the translated maps into
    JS objects, reading properties off JS errors and result objects is
    interop and lives in the single binding namespace (pg-cljs.binding);
-   this namespace deals in strings, keywords, maps and vectors only.
+   this namespace deals in strings, keywords, maps and vectors only. The
+   one exception to the no-promises rule is run-op, the promise adapter
+   every I/O namespace (core, pool, listen) wraps its upstream calls in:
+   it is plumbing, not I/O.
 
    `pg` mixes camelCase (`connectionTimeoutMillis`, `rowCount`) and
    snake_case (`statement_timeout`, `client_encoding`) names, so every
@@ -16,7 +19,8 @@
    kebab-to-camel rule. Column names and column values of query results are
    data, not wire codes: they are never translated by anything in this
    namespace."
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [promesa.core :as p]))
 
 ;; ---------------------------------------------------------------------------
 ;; Translation tables: pg-cljs kebab keyword -> upstream name (config, query)
@@ -72,6 +76,35 @@
    :keep-alive-initial-delay-ms "keepAliveInitialDelayMillis"
    :types "types"
    :stream "stream"})
+
+(def pool-only-keys
+  "Configuration keys accepted by pool! on top of client-config-keys, each
+   with the upstream `pg.Pool` option it becomes. Every client key is a
+   pool key too: the pool hands its whole options object to each client
+   it creates.
+
+   | key                   | upstream           | default upstream           |
+   | :max                  | max                | 10 clients                 |
+   | :min                  | min                | 0 (exempt from idle eviction; never pre-created) |
+   | :max-uses             | maxUses            | Infinity (checkouts before a client is destroyed on release) |
+   | :max-lifetime-seconds | maxLifetimeSeconds | 0 = off (age after which a client is destroyed at its next release, or at once when idle) |
+   | :idle-timeout-ms      | idleTimeoutMillis  | 10000 (0 disables; applies to clients above :min) |
+   | :allow-exit-on-idle   | allowExitOnIdle    | false (unref idle sockets and timers so Node can exit) |
+
+   :connection-timeout-ms (a client key) also bounds the wait for a free
+   client in a full pool. Not offered: onConnect / verify (JavaScript
+   callback hooks run on the raw client), log, Client, Promise, poolSize."
+  {:max "max"
+   :min "min"
+   :max-uses "maxUses"
+   :max-lifetime-seconds "maxLifetimeSeconds"
+   :idle-timeout-ms "idleTimeoutMillis"
+   :allow-exit-on-idle "allowExitOnIdle"})
+
+(def pool-config-keys
+  "Every configuration key pool! accepts: client-config-keys plus
+   pool-only-keys, with the upstream name each becomes."
+  (merge client-config-keys pool-only-keys))
 
 (def ssl-keys
   "Keys accepted inside an :ssl map and the Node `tls.connect` option each
@@ -149,6 +182,23 @@
    ["channel" :channel]
    ["payload" :payload]])
 
+(def transaction-statuses
+  "The ReadyForQuery status byte the server sends after every command (and
+   `getTransactionStatus` returns) -> keyword: \"I\" idle (not in a
+   transaction block), \"T\" inside a transaction block, \"E\" inside a
+   FAILED transaction block (every command is rejected until ROLLBACK).
+   Nothing else is ever sent; transaction-status maps an absent value to
+   :unknown."
+  {"I" :idle
+   "T" :in-transaction
+   "E" :in-failed-transaction})
+
+(defn transaction-status
+  "The keyword of transaction-statuses for a status string; :unknown for
+   nil (no ReadyForQuery seen yet) or anything else."
+  [s]
+  (get transaction-statuses s :unknown))
+
 ;; ---------------------------------------------------------------------------
 ;; Errors: ONE taxonomy, :type under :pg-cljs/
 ;; ---------------------------------------------------------------------------
@@ -214,17 +264,28 @@
 ;; Configuration
 ;; ---------------------------------------------------------------------------
 
+(defn- config-of
+  [op x]
+  (cond
+    (nil? x) {}
+    (string? x) {:connection-string x}
+    (map? x) x
+    :else (throw (config-error (str (name op) "!: expected a config map, a connection string or nil")
+                               {:arg :config :value x :op op}))))
+
 (defn connect-config
   "The configuration map behind a connect! argument: nil -> {} (upstream
    then reads the PG* environment), a string -> {:connection-string s}, a
    map -> itself. Anything else is a config-error."
   [x]
-  (cond
-    (nil? x) {}
-    (string? x) {:connection-string x}
-    (map? x) x
-    :else (throw (config-error "connect!: expected a config map, a connection string or nil"
-                               {:arg :config :value x :op :connect}))))
+  (config-of :connect x))
+
+(defn pool-config
+  "The configuration map behind a pool! argument: the same three forms as
+   connect-config (nil, a connection string, a map); :op :pool in the
+   config-error."
+  [x]
+  (config-of :pool x))
 
 (defn normalize-config
   "Drops nil-valued entries of a config map. nil -> {}. Values are not
@@ -254,20 +315,40 @@
     (check-keys! "connect!: :ssl" ssl-keys (:ssl config) {:arg :ssl :op :connect}))
   config)
 
+(defn check-pool-config!
+  "The pool counterpart of check-config!: keys outside pool-config-keys
+   (client keys plus pool-only-keys) and :ssl keys outside ssl-keys are a
+   config-error with :op :pool. Returns `config`."
+  [config]
+  (check-keys! "pool!: config" pool-config-keys config {:arg :config :op :pool})
+  (when (map? (:ssl config))
+    (check-keys! "pool!: :ssl" ssl-keys (:ssl config) {:arg :ssl :op :pool}))
+  config)
+
 (defn- translate-keys
   "Kebab map -> map keyed by the upstream names of `table`."
   [table m]
   (into {} (map (fn [[k v]] [(get table k) v])) m))
+
+(defn- upstream-config
+  [table config]
+  (let [m (translate-keys table config)]
+    (if (map? (get m "ssl"))
+      (assoc m "ssl" (translate-keys ssl-keys (get m "ssl")))
+      m)))
 
 (defn config->upstream
   "A validated kebab config map -> a map keyed by the upstream option
    names (strings). An :ssl map is translated through ssl-keys; every other
    value passes through verbatim."
   [config]
-  (let [m (translate-keys client-config-keys config)]
-    (if (map? (get m "ssl"))
-      (assoc m "ssl" (translate-keys ssl-keys (get m "ssl")))
-      m)))
+  (upstream-config client-config-keys config))
+
+(defn pool-config->upstream
+  "A validated pool config map -> a map keyed by the upstream `pg.Pool`
+   option names (pool-config-keys); :ssl as in config->upstream."
+  [config]
+  (upstream-config pool-config-keys config))
 
 ;; ---------------------------------------------------------------------------
 ;; Query commands
@@ -337,11 +418,16 @@
 (def connection-gone-messages
   "The messages of the plain Errors `pg` rejects a query with when the
    connection is not there to run it (as opposed to the server refusing
-   the query). These become :pg-cljs/connect-error."
+   the query), including the pool's own: a pool used after end, a wait for
+   a free client that exceeded :connection-timeout-ms, a new client that
+   did not connect in time. These become :pg-cljs/connect-error."
   #{"Connection terminated"
     "Connection terminated unexpectedly"
     "Client has encountered a connection error and is not queryable"
-    "Client was closed and is not queryable"})
+    "Client was closed and is not queryable"
+    "Cannot use a pool after calling end on the pool"
+    "timeout exceeded when trying to connect"
+    "Connection terminated due to connection timeout"})
 
 (defn query-failure-kind
   "Given the properties read off an error that rejected a query
@@ -355,6 +441,54 @@
     (contains? connection-gone-messages message) :connect
     (some? code) :connect
     :else :query))
+
+;; ---------------------------------------------------------------------------
+;; The promise adapter and the rejection normalizer shared by the I/O
+;; namespaces. `info-of` is the binding's reader of a JS error's facts
+;; (message, name, socket fields, DatabaseError fields); this namespace
+;; never reads a JS object itself.
+;; ---------------------------------------------------------------------------
+
+(defn passthrough-error?
+  "True when `e` already is a pg-cljs error or any other ex-info (caller
+   code): those are rethrown untouched; only JS errors are normalized."
+  [e]
+  (or (some? (error-data e)) (instance? ExceptionInfo e)))
+
+(defn normalize-failure
+  "The ex-info for a rejection `e` of operation `op`: a passthrough error
+   as it is; otherwise `kind` :connect -> a connect-error, :query -> a
+   query-error unless query-failure-kind says the connection is gone (then
+   a connect-error). `info-of` reads the error's facts
+   (pg-cljs.binding/error-info); the data is those facts plus :cause (the
+   JS error) and :op."
+  [kind op info-of e]
+  (if (passthrough-error? e)
+    e
+    (let [info (info-of e)
+          data (assoc (dissoc info :database-error?) :cause e :op op)]
+      (if (or (= :connect kind) (= :connect (query-failure-kind info)))
+        (connect-error (:message info) data)
+        (query-error (:message info) data)))))
+
+(defn run-op
+  "Runs `f` (which may throw synchronously and returns a promise or a
+   value) and returns a promesa promise settled with its outcome, every
+   rejection passed through `normalize`. Built with p/create around the
+   upstream promise, never chained off a shared resolved promise."
+  [normalize f]
+  (p/create
+   (fn [resolve reject]
+     (try
+       (let [r (f)]
+         (if (p/promise? r)
+           (p/handle r (fn [v e]
+                         (if (some? e)
+                           (reject (normalize e))
+                           (resolve v))))
+           (resolve r)))
+       (catch :default e
+         (reject (normalize e)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Environment values

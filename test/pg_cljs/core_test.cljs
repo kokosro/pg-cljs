@@ -449,4 +449,5 @@
                     {:process-id 99 :channel "jobs" :payload ""}]
                    @heard))
             (is (= [{:message "fyi" :severity "NOTICE" :code "00000"}] @noticed))
-            (is (= "I" (b/transaction-status (:js client))))))))))
+            (is (= "I" (b/transaction-status (:js client))))
+            (is (= :idle (core/transaction-status client)))))))))

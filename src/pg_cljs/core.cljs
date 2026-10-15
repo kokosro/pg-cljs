@@ -1,12 +1,14 @@
 (ns pg-cljs.core
   "The pg-cljs client: construction of PostgreSQL clients from a kebab-case
    configuration map, a connection string or the PG* environment variables,
-   and their lifecycle (connect, query, end). The public surface is plain
-   ClojureScript data: configuration and query results are maps of
-   kebab-cased keywords, asynchronous operations return promesa promises,
-   and notifications arrive on core.async channels. No JS interop appears
-   at a call site; the `pg` (node-postgres) objects stay inside the single
-   binding namespace.
+   and their lifecycle (connect, query, end, transaction status). Pools
+   live in pg-cljs.pool (a pooled client is the same handle type as a
+   connect! client), LISTEN/NOTIFY channels in pg-cljs.listen. The public
+   surface is plain ClojureScript data: configuration and query results
+   are maps of kebab-cased keywords, asynchronous operations return
+   promesa promises, and notifications arrive on core.async channels. No
+   JS interop appears at a call site; the `pg` (node-postgres) objects
+   stay inside the single binding namespace.
 
    Conventions:
    - names ending in `!` perform I/O and return a promise;
@@ -41,7 +43,10 @@
 ;; ---------------------------------------------------------------------------
 
 (defrecord Client
-  ;; js: the upstream pg.Client. state: atom {:status :connected | :ended}.
+  ;; js: the upstream pg.Client. state: atom {:status :connecting |
+  ;; :connected | :released | :ended} plus, for a client checked out of a
+  ;; pool, :pooled? true and :end-listener (removed again at release),
+  ;; and the live LISTEN subscriptions of pg-cljs.listen under :listens.
   [js state])
 
 (extend-protocol IPrintWithWriter
@@ -55,56 +60,29 @@
   [x]
   (instance? Client x))
 
-(defn- check-client! [op c]
+(defn check-client!
+  "Throws a config-error (:arg :client, :op op) unless `c` is a client
+   handle. Shared with the pool and listen namespaces."
+  [op c]
   (when-not (client? c)
     (throw (util/config-error (str (name op) "!: first argument must be a client handle")
                               {:arg :client :value c :op op}))))
 
 ;; ---------------------------------------------------------------------------
-;; Error normalization and the one promise adapter
+;; Error normalization and the one promise adapter (pg-cljs.util/run-op)
 ;; ---------------------------------------------------------------------------
-
-(defn- passthrough?
-  "pg-cljs errors and any other ex-info (caller code) pass through as they
-   are; only JS errors are normalized."
-  [e]
-  (or (some? (util/error-data e)) (instance? ExceptionInfo e)))
 
 (defn- ->connect-error
   [op e]
-  (if (passthrough? e)
-    e
-    (let [info (b/error-info e)]
-      (util/connect-error (:message info)
-                          (assoc (dissoc info :database-error?) :cause e :op op)))))
+  (util/normalize-failure :connect op b/error-info e))
 
 (defn- ->query-failure
   "A rejection of query!: a server ErrorResponse and the read timeout are
    query-errors; a connection that is gone is a connect-error."
   [op e]
-  (if (passthrough? e)
-    e
-    (let [info (b/error-info e)
-          data (assoc (dissoc info :database-error?) :cause e :op op)]
-      (if (= :connect (util/query-failure-kind info))
-        (util/connect-error (:message info) data)
-        (util/query-error (:message info) data)))))
+  (util/normalize-failure :query op b/error-info e))
 
-(defn- run
-  "Runs `f` (which may throw synchronously and returns a promise) and
-   returns a promesa promise settled with its outcome, every rejection
-   normalized through `normalize`."
-  [normalize f]
-  (p/create
-   (fn [resolve reject]
-     (try
-       (p/handle (f)
-                 (fn [v e]
-                   (if (some? e)
-                     (reject (normalize e))
-                     (resolve v))))
-       (catch :default e
-         (reject (normalize e)))))))
+(def ^:private run util/run-op)
 
 ;; ---------------------------------------------------------------------------
 ;; Construction
@@ -197,6 +175,25 @@
          (check-client! :query client)
          (let [js-cmd (b/query->js (util/query->upstream (util/check-query! cmd)))]
            (p/then (b/query (:js client) js-cmd) b/result->data)))))
+
+;; ---------------------------------------------------------------------------
+;; Transaction status
+;; ---------------------------------------------------------------------------
+
+(defn transaction-status
+  "The transaction state of the connection as the server last reported it,
+   synchronously: :idle (no transaction block open), :in-transaction
+   (inside BEGIN ... COMMIT / ROLLBACK), :in-failed-transaction (a command
+   inside the block failed; every further command is rejected until
+   ROLLBACK), :unknown (never reported). Read from the status byte of the
+   ReadyForQuery message that ends every command, which upstream keeps as
+   `getTransactionStatus()`; it changes only when a command completes
+   (BEGIN -> :in-transaction, COMMIT / ROLLBACK -> :idle, a server
+   rejection inside a block -> :in-failed-transaction) and keeps its last
+   value after end!. Throws a config-error for a non-client argument."
+  [client]
+  (check-client! :transaction-status client)
+  (util/transaction-status (b/transaction-status (:js client))))
 
 ;; ---------------------------------------------------------------------------
 ;; Lifecycle
