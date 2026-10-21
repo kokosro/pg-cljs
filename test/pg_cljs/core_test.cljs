@@ -420,7 +420,7 @@
             (is (= :ended (:status @(:state client))))))))))
 
 ;; ---------------------------------------------------------------------------
-;; Events the binding will feed the Phase 2 channels
+;; Events the binding feeds the channels
 ;; ---------------------------------------------------------------------------
 
 (deftest notifications-and-notices-arrive-as-data

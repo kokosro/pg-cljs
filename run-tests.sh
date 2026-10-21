@@ -27,10 +27,11 @@ if [ ! -d node_modules ]; then
   npm install
 fi
 
-# JAVA_HOME must point at a working JDK: bare /usr/bin/java on this Mac is
-# the macOS stub that only opens an installer dialog.
+# JAVA_HOME must point at a working JDK: bare /usr/bin/java on macOS is the
+# installer-dialog stub.
+# Use the Homebrew JDK when available and JAVA_HOME is not already set.
 if [ -z "${JAVA_HOME:-}" ]; then
-  export JAVA_HOME=/opt/homebrew/opt/openjdk
+  [ -d /opt/homebrew/opt/openjdk ] && export JAVA_HOME=/opt/homebrew/opt/openjdk
 fi
 
 npx shadow-cljs compile node-test --config-merge '{:autorun false}'

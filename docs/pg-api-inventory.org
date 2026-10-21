@@ -1,4 +1,4 @@
-#+TITLE: pg (node-postgres) API inventory — pg-cljs phase 0
+#+TITLE: pg (node-postgres) API inventory — pg-cljs
 #+DATE: 2026-10-15
 #+STARTUP: overview
 #+OPTIONS: toc:3
@@ -6,9 +6,9 @@
 * About this document
 
 This is the verified inventory of the external surface that pg-cljs wraps: the npm
-package =pg= (node-postgres) 8.23.1 and the packages it is made of. It is research
-only; implementation happens in later phases, and section 11 states the consequences
-each fact has for the pg-cljs design.
+package =pg= (node-postgres) 8.23.1 and the packages it is made of. It fixes
+contracts, not code; section 11 states the consequences each fact has for the pg-cljs
+design.
 
 *Product constraint that shapes everything below:* the finished library is
 ClojureScript-only at every call site: no =^js= hints, no JS interop outside ONE binding
@@ -38,8 +38,8 @@ dependencies beyond =pg=.
 - The =Query= object / "submittable" protocol (=pg-cursor=, =pg-query-stream=), the
   =row= event streaming mode, =client.cancel=, portal paging (=rows= option).
 - The callback forms of every method (=pg-cljs= uses the promise forms only).
-- Pipeline mode (=pipeline: true=, pg 8.17+): inventoried (2.4.6), not exposed in the
-  first phases; a later phase may add it as an option after a live round-trip.
+- Pipeline mode (=pipeline: true=, pg 8.17+): inventoried (2.4.6), not exposed; it may
+  be added as an option after a live round-trip.
 - =pg-native= / =pg.native= / =NODE_PG_FORCE_NATIVE=; =pg-cloudflare= runtime; the
   deprecated =pgpass= lookup and the =Promise= constructor option; =client.ref/unref=;
   COPY (=pg-copy-streams=); binary result mode (=binary: true=); =replication=.
@@ -47,24 +47,24 @@ dependencies beyond =pg=.
   files from disk inside =pg-connection-string=): the library never reads a file; it
   passes an =ssl= map through and documents that the string form may read files.
 
-** Method and evidence tags
-Every fact carries one or more evidence tags:
-- =[SRC file:NN]= — read from the installed package sources under =node_modules/=
+** Sources and reading conventions
+Every fact cites its source in parentheses:
+- =(file:NN)= — read from the installed package sources under =node_modules/=
   (installed by =npm install= with the pin =pg@8.23.1= on 2026-10-15). File paths are
   relative to =node_modules/=; =NN= is the line in that file. The installed source is
   the ground truth; where the web docs and the source disagree, the source wins and
   the disagreement is recorded.
-- =[DOC url]= — the public documentation at https://node-postgres.com, fetched on
+- =(docs url)= — the public documentation at https://node-postgres.com, fetched on
   2026-10-15.
-- =[OFFLINE]= — observed on 2026-10-15 with two throw-away Node scripts (Node
+- =(offline)= — observed on 2026-10-15 with two throw-away Node scripts (Node
   v22.23.2, macOS, =TZ=Europe/Bucharest=) that handed the REAL =pg= Client / Pool a
   fake socket (the =stream= config option, section 9) speaking the PostgreSQL wire
   protocol from a table: no server, no network except two deliberate =127.0.0.1:9=
-  connection refusals. The scripts lived in the job's tmp dir and are not part of the
-  repo; the facts they established are reproduced in section 9 so the Phase 1 fake
-  can be rebuilt from this document.
-- =[NPM]= — =npm view= / installed =package.json= metadata.
-Anything not covered by these tags is in section 10 "Uncertain / needs verification".
+  connection refusals. The scripts are not part of the repo; the facts they
+  established are reproduced in section 9 so the test fake can be rebuilt from this
+  document.
+- =(npm)= — =npm view= / installed =package.json= metadata.
+Anything not covered by these sources is in section 10 "Uncertain / needs verification".
 
 ** Reading conventions
 - Upstream names are given verbatim (=connectionTimeoutMillis=, =statement_timeout=,
@@ -94,16 +94,16 @@ Anything not covered by these tags is in section 10 "Uncertain / needs verificat
 
 | Fact                      | Value                                                            | Evidence |
 |---------------------------+------------------------------------------------------------------+----------|
-| npm package               | =pg= 8.23.1 (latest 8.x on 2026-10-15; pinned exact in package.json) | =[NPM]= |
-| engines                   | node >= 16.0.0                                                   | =[NPM pg/package.json]= |
-| runtime dependencies      | =pg-connection-string= ^2.14.1 (installed 2.14.1), =pg-pool= ^3.14.0 (3.14.0), =pg-protocol= ^1.16.1 (1.16.1), =pg-types= 2.2.0 (exact), =pgpass= 1.0.5 (exact) | =[NPM]= |
-| pg-types' own deps        | =postgres-array= 2.0.0, =postgres-bytea= 1.0.1, =postgres-date= 1.0.7, =postgres-interval= 1.2.0, =pg-int8= 1.0.1 | =[NPM]= |
-| optional peer             | =pg-native= >= 3.0.1 (not installed; =pg.native= is =null= then)  | =[NPM]= =[OFFLINE]= |
-| also installed            | =pg-cloudflare= 1.4.1 (optional dep for Cloudflare Workers; the Node stream path is used here) | =[SRC pg/lib/stream.js:20-34,78-83]= |
-| =main=                    | =./lib= (CommonJS); =exports= map also offers an ESM entry       | =[NPM]= |
+| npm package               | =pg= 8.23.1 (latest 8.x on 2026-10-15; pinned exact in package.json) | =(npm)= |
+| engines                   | node >= 16.0.0                                                   | =(npm)= |
+| runtime dependencies      | =pg-connection-string= ^2.14.1 (installed 2.14.1), =pg-pool= ^3.14.0 (3.14.0), =pg-protocol= ^1.16.1 (1.16.1), =pg-types= 2.2.0 (exact), =pgpass= 1.0.5 (exact) | =(npm)= |
+| pg-types' own deps        | =postgres-array= 2.0.0, =postgres-bytea= 1.0.1, =postgres-date= 1.0.7, =postgres-interval= 1.2.0, =pg-int8= 1.0.1 | =(npm)= |
+| optional peer             | =pg-native= >= 3.0.1 (not installed; =pg.native= is =null= then)  | =(npm)= =(offline)= |
+| also installed            | =pg-cloudflare= 1.4.1 (optional dep for Cloudflare Workers; the Node stream path is used here) | =(pg/lib/stream.js:20-34,78-83)= |
+| =main=                    | =./lib= (CommonJS); =exports= map also offers an ESM entry       | =(npm)= |
 
 ** 1.1 Module exports (=require('pg')=)
-=[SRC pg/lib/index.js:21-35]= =[OFFLINE]= — the export object has exactly these keys:
+=(pg/lib/index.js:21-35)= =(offline)= — the export object has exactly these keys:
 =defaults=, =Client=, =Query=, =Pool=, =_pools= (internal, empty array), =Connection=,
 =types= (the =pg-types= module), =DatabaseError= (from =pg-protocol=), =TypeOverrides=,
 =escapeIdentifier=, =escapeLiteral=, =Result=, =utils=; plus a lazy non-enumerable
@@ -115,10 +115,10 @@ implementation and is out of scope.
 * 2. Client
 
 ** 2.1 Construction: =new Client(config)=
-=[SRC pg/lib/client.js:51-117]=. =config= may be omitted, a string (a connection
+=(pg/lib/client.js:51-117)=. =config= may be omitted, a string (a connection
 string, parsed as a whole: =connection-parameters.js:55=) or an object. Construction
 never connects and never throws for connection problems; it throws synchronously only
-for an invalid =sslnegotiation= (=connection-parameters.js:105-112=; =[OFFLINE]=
+for an invalid =sslnegotiation= (=connection-parameters.js:105-112=; =(offline)=
 messages in 8.3).
 
 Resolution order for each connection parameter (=connection-parameters.js:9-23=
@@ -130,14 +130,14 @@ Resolution order for each connection parameter (=connection-parameters.js:9-23=
 =Object.assign=-ed OVER the config object, so every key the parser emits overrides the
 same key given directly — including keys the string does NOT contain: the parser emits
 =port: ''= and =database: null= when the URL has none, which then fall through to
-env/default. =[OFFLINE]=: ={connectionString: "postgres://a@b/c", port: 9999, host:
+env/default. =(offline)=: ={connectionString: "postgres://a@b/c", port: 9999, host:
 "ignored?"}= yields host =b=, port =5432=, user =a=, database =c=.
 
 Config fields (upstream spelling), what reads them, and the default:
 
 | Field                                  | Read at                             | Env fallback            | Default                              | Evidence |
 |----------------------------------------+-------------------------------------+-------------------------+--------------------------------------+----------|
-| =user=                                 | =connection-parameters.js:63=       | =PGUSER=                | =process.env.USER= (=USERNAME= on win32) | =[SRC defaults.js:3-15]= |
+| =user=                                 | =connection-parameters.js:63=       | =PGUSER=                | =process.env.USER= (=USERNAME= on win32) | =(defaults.js:3-15)= |
 | =database=                             | =:64-68=                            | =PGDATABASE=            | the resolved =user=                  | |
 | =port=                                 | =:70= (=parseInt=)                  | =PGPORT=                | 5432                                 | |
 | =host=                                 | =:71=                               | =PGHOST=                | ="localhost"=                        | |
@@ -155,7 +155,7 @@ Config fields (upstream spelling), what reads them, and the default:
 | =lock_timeout=                         | =:122=                              | none                    | =false=                              | ms; startup parameter |
 | =idle_in_transaction_session_timeout=  | =:123=                              | none                    | =false=                              | ms; startup parameter |
 | =query_timeout=                        | =:124=                              | none                    | =false=                              | ms, client-side read timeout (2.4.4) |
-| =connectionTimeoutMillis=              | =:126-130= and =client.js:116=      | =PGCONNECT_TIMEOUT= (seconds, only when the option is undefined) | 0 (none) | =[OFFLINE]= 2.3 |
+| =connectionTimeoutMillis=              | =:126-130= and =client.js:116=      | =PGCONNECT_TIMEOUT= (seconds, only when the option is undefined) | 0 (none) | =(offline)= 2.3 |
 | =keepAlive=                            | =:132-136=, =client.js:95=          | none                    | =false=                              | |
 | =keepAliveInitialDelayMillis=          | =:138-140=, =client.js:96=          | none                    | 0                                    | |
 | =types=                                | =client.js:77=                      | none                    | =pg-types=                           | an object with =getTypeParser(oid, format)= (section 4.4) |
@@ -166,20 +166,20 @@ Config fields (upstream spelling), what reads them, and the default:
 | =connection=                           | =client.js:89-90=                   | none                    | new =Connection=                     | a whole fake Connection; not used by pg-cljs |
 | =Promise=                              | =client.js:73-76=                   | none                    | =global.Promise=                     | deprecated (warning), out of scope |
 
-=[DOC https://node-postgres.com/apis/client]= lists the same fields (minus =stream=,
+=(docs https://node-postgres.com/apis/client)= lists the same fields (minus =stream=,
 =connection=, =binary=, =replication=, =enableChannelBinding=, =scramMaxIterations=)
 with the same meanings. Password and =ssl.key= are made non-enumerable on the client
 so they do not print (=client.js:62-67,110-114=).
 
-Public instance properties set at construction =[SRC client.js:55-58,69,101-106]=:
+Public instance properties set at construction =(client.js:55-58,69,101-106)=:
 =user=, =database=, =port=, =host=, =password= (hidden), =replication=, =pipeline=,
 =binary=, =processID= (=null= until connected), =secretKey= (=null=), =ssl=,
-=sslNegotiation=, =connectionParameters=. =[OFFLINE]= with no PG* variables set,
+=sslNegotiation=, =connectionParameters=. =(offline)= with no PG* variables set,
 =new Client({})= has host ="localhost"=, port 5432, user = =$USER=, database = =$USER=,
 password =null=, ssl =false=.
 
 ** 2.2 Environment variables honored — exactly what the installed source reads
-=[SRC pg/lib/connection-parameters.js]=; the generic rule is =process.env['PG' +
+=(pg/lib/connection-parameters.js)=; the generic rule is =process.env['PG' +
 key.toUpperCase()]= (=:15=) for every =val()= call without an explicit env name:
 
 | Variable               | Read at   | Maps to                 | Note |
@@ -204,16 +204,16 @@ NOT read (no env fallback: =val(..., config, false)=, =:120-124=):
 =PGHOSTADDR=, =PGSSLROOTCERT= / =PGSSLCERT= / =PGSSLKEY=, =PGSERVICE=, =PGPASSFILE=
 (the deprecated =pgpass= lookup reads =~/.pgpass= / =PGPASSFILE= itself only when
 =password= resolves to =null=, =client.js:295-310=; out of scope), =PGTZ=,
-=PGCONNECTIONSTRING=. =[OFFLINE]=: with =PGHOSTADDR= and =PGSSLROOTCERT= set they had no
-effect on the connection parameters. =[DOC https://node-postgres.com/features/connecting]=
+=PGCONNECTIONSTRING=. =(offline)=: with =PGHOSTADDR= and =PGSSLROOTCERT= set they had no
+effect on the connection parameters. =(docs https://node-postgres.com/features/connecting)=
 documents only =PGUSER=, =PGPASSWORD=, =PGHOST=, =PGPORT=, =PGDATABASE= and defers to
 libpq for the rest; the source list above is the truth.
 
-Config beats env =[OFFLINE]=: ={host: "cfg"}= with =PGHOST=envhost= gives ="cfg"=.
+Config beats env =(offline)=: ={host: "cfg"}= with =PGHOST=envhost= gives ="cfg"=.
 
 ** 2.3 =client.connect()=
-=[SRC client.js:232-247]=: without a callback, returns a native Promise that RESOLVES
-WITH THE CLIENT itself (=resolve(this)=, =:243=; =[OFFLINE]= =r === client=) once the
+=(client.js:232-247)=: without a callback, returns a native Promise that RESOLVES
+WITH THE CLIENT itself (=resolve(this)=, =:243=; =(offline)= =r === client=) once the
 backend sends ReadyForQuery (=client.js:373-387=; the =connect= event is emitted then,
 =:386=), or REJECTS with:
 - the Node socket error (e.g. =ECONNREFUSED=, section 8.2) or the TLS error,
@@ -222,56 +222,56 @@ backend sends ReadyForQuery (=client.js:373-387=; the =connect= event is emitted
   connecting goes to the connect callback, not the =error= event),
 - =Error('timeout expired')= when =connectionTimeoutMillis= elapses (=:167-171=; the
   timer destroys the socket, the rejection message is ="timeout expired"=;
-  =[OFFLINE]=), NOTE the timer is =unref()='d (=:173-175=): a process with nothing
-  else alive exits before it fires (=[OFFLINE]= observed with a fake socket; a real
+  =(offline)=), NOTE the timer is =unref()='d (=:173-175=): a process with nothing
+  else alive exits before it fires (=(offline)= observed with a fake socket; a real
   =net.Socket= keeps the loop alive, so this bites only fakes),
 - =Error('Connection terminated unexpectedly')= when the socket closes mid-handshake
   without an earlier error (=:203-224=),
 - =Error('Client has already been connected. You cannot reuse a client.')= on a second
-  =connect()= — also after =end()=: a Client is single-use (=:158-164=; =[OFFLINE]=).
+  =connect()= — also after =end()=: a Client is single-use (=:158-164=; =(offline)=).
 - =TypeError('Password must be a string')= when a password FUNCTION resolves a
   non-string (=:283=); a rejecting password function rejects connect with its error
   (=:292-294=).
 
-=password= as a function =[SRC client.js:276-294]= =[DOC features/connecting]=: called
+=password= as a function =(client.js:276-294)= =(docs features/connecting)=: called
 with the =ConnectionParameters= when the server asks for a password, may return a
 string or a promise of one; =undefined= means "no password". Startup parameters sent
-=[SRC client.js:543-572]= =[OFFLINE]=: =user=, =database=, =application_name= (or the
+=(client.js:543-572)= =(offline)=: =user=, =database=, =application_name= (or the
 fallback), =replication=, =statement_timeout= / =lock_timeout= /
 =idle_in_transaction_session_timeout= (as integer strings), =options=; the Connection
 adds =client_encoding= (=UTF8= default).
 
 Queries may be issued BEFORE =connect()= resolves: they queue and run once the client
 is ready (=client.js:782-783=, =_pulseQueryQueue= gated on =readyForQuery=;
-=[OFFLINE]= a query issued before =connect()= resolved with =command "SELECT"=).
+=(offline)= a query issued before =connect()= resolved with =command "SELECT"=).
 
 ** 2.4 =client.query(...)=
-=[SRC client.js:668-785]=.
+=(client.js:668-785)=.
 
 *** 2.4.1 Forms
 | Form                                 | Effect                                             | Evidence |
 |--------------------------------------+----------------------------------------------------+----------|
-| =query(text)=                        | simple-protocol query (no Parse/Bind)              | =[SRC query.js:35-58,179-181]= |
+| =query(text)=                        | simple-protocol query (no Parse/Bind)              | =(query.js:35-58,179-181)= |
 | =query(text, values)=                | extended protocol when =values.length > 0=         | =:53-57= |
-| =query(configObject)=                | fields below; =values= inside                      | =[SRC utils.js:154-169]= |
+| =query(configObject)=                | fields below; =values= inside                      | =(utils.js:154-169)= |
 | =query(configObject, values)=        | =values= argument wins over =config.values=        | =:158-164= |
-| =query(submittable)=                 | any object with a =submit= function is used as the Query itself and RETURNED (not a promise) | =[SRC client.js:677-685]= out of scope |
-| =query(null)= / =query(undefined)=   | throws =TypeError('Client was passed a null or undefined query')= SYNCHRONOUSLY | =:673-675= =[OFFLINE]= |
+| =query(submittable)=                 | any object with a =submit= function is used as the Query itself and RETURNED (not a promise) | =(client.js:677-685)= out of scope |
+| =query(null)= / =query(undefined)=   | throws =TypeError('Client was passed a null or undefined query')= SYNCHRONOUSLY | =:673-675= =(offline)= |
 
 Without a callback the result is a native Promise (=:689-696=); its rejection has the
 stack re-captured at the =query= call. The config object is CLONED before use
 (=utils.js:171-176=), the caller's object is not mutated.
 
 *** 2.4.2 Query config fields
-=[SRC query.js:14-24]= =[DOC apis/client]=:
+=(query.js:14-24)= =(docs apis/client)=:
 | Field          | Type               | Meaning                                                       |
 |----------------+--------------------+---------------------------------------------------------------|
 | =text=         | string             | the SQL; =$1..$n= placeholders                                |
-| =values=       | array              | parameters; MUST be an array (=query.js:160-162=: ="Query values must be an array"= rejects, =[OFFLINE]=) |
+| =values=       | array              | parameters; MUST be an array (=query.js:160-162=: ="Query values must be an array"= rejects, =(offline)=) |
 | =name=         | string             | prepared-statement name: parsed once per connection, re-executed by name (=query.js:41-42,213-224=; the name→text map is per Connection, =client.js:509-512=); reusing a name with a different text rejects ="Prepared statements must be unique - '<name>' was used for a different statement"= (=query.js:156-159=) |
-| =rowMode=      ="array"=           | rows as arrays of values in column order (=result.js:20-23,50-61=; =[OFFLINE]= =["brianc"]=) |
+| =rowMode=      ="array"=           | rows as arrays of values in column order (=result.js:20-23,50-61=; =(offline)= =["brianc"]=) |
 | =types=        | object             | per-query =getTypeParser(oid, format)= provider (=query.js:17,28=; =result.js:98-102=) |
-| =query_timeout= | number ms         | per-query read timeout overriding the client's (=client.js:702=; =[OFFLINE]=) |
+| =query_timeout= | number ms         | per-query read timeout overriding the client's (=client.js:702=; =(offline)=) |
 | =binary=       | boolean            | binary results; out of scope (=query.js:20=, =client.js:739-741=) |
 | =rows=         | number             | portal paging; out of scope (=query.js:16,46-48=) |
 | =portal=       | string             | portal name; out of scope |
@@ -279,7 +279,7 @@ stack re-captured at the =query= call. The config object is CLONED before use
 | =callback=     | function           | callback form; out of scope |
 
 A query object with neither =text= nor =name= rejects ="A query must have either text
-or a name. Supplying neither is unsupported."= (=query.js:153-155=, =[OFFLINE]=).
+or a name. Supplying neither is unsupported."= (=query.js:153-155=, =(offline)=).
 
 *** 2.4.3 Queueing and ordering
 One query at a time per client: new queries wait in =_queryQueue= and run in order
@@ -290,14 +290,14 @@ unless =pipeline= is on. Consequence in 11.3: pg-cljs must not rely on upstream
 queueing; the caller sequences, or the pool is used.
 
 *** 2.4.4 =query_timeout=
-=[SRC client.js:702-737]=: when set (per query or per client), a timer rejects the
+=(client.js:702-737)=: when set (per query or per client), a timer rejects the
 query with =Error('Query read timeout')=, removes it from the queue if not yet sent,
 and in pipeline mode destroys the connection if already sent. The connection is NOT
 cancelled server-side in non-pipeline mode: the backend keeps running the statement
 and the client stays blocked until it finishes (flagged 10.2).
 
 *** 2.4.5 Value preparation (JS → PostgreSQL text parameters)
-=[SRC pg/lib/utils.js:51-93]= =[DOC features/queries]= =[OFFLINE]=:
+=(pg/lib/utils.js:51-93)= =(docs features/queries)= =(offline)=:
 | JS value                     | Sent as                                                        |
 |------------------------------+----------------------------------------------------------------|
 | =null= / =undefined=         | SQL NULL                                                       |
@@ -313,17 +313,17 @@ NOTE the ="1.5"= / ="true"= strings reach the server as untyped text parameters;
 server casts them from the statement's inferred parameter types.
 
 *** 2.4.6 Pipeline mode (inventoried, not wrapped now)
-=[SRC client.js:101,643-666,747-763,815-821]=: with =pipeline: true= queries are sent
+=(client.js:101,643-666,747-763,815-821)=: with =pipeline: true= queries are sent
 without waiting; the =rows= option and custom submittables reject with ="… not
-supported in pipeline mode"=; =end()= waits for =drain=. =[DOC apis/client]= names
+supported in pipeline mode"=; =end()= waits for =drain=. =(docs apis/client)= names
 =/features/pipelining=.
 
 ** 2.5 The Result object — verified shape
-=[SRC pg/lib/result.js:10-25]= =[OFFLINE]= (own enumerable keys, in order): =command=,
+=(pg/lib/result.js:10-25)= =(offline)= (own enumerable keys, in order): =command=,
 =rowCount=, =oid=, =rows=, =fields=, =_parsers=, =_types=, =RowCtor= (always =null=),
 =rowAsArray=, =_prebuiltEmptyResultObject=. Constructor name =Result=.
 
-| Property     | Type                      | Set by                                                 | Values observed =[OFFLINE]= |
+| Property     | Type                      | Set by                                                 | Values observed =(offline)= |
 |--------------+---------------------------+--------------------------------------------------------+-----------------------------|
 | =command=    | string or =null=          | first word of the CommandComplete tag (=result.js:28-39=) | ="SELECT"=, ="INSERT"=, ="LOCK"= (from ="LOCK TABLE"=: only the first word), ="NOTIFY"= |
 | =rowCount=   | number or =null=          | ="COMMAND ROWS"= → ROWS; ="COMMAND OID ROWS"= → ROWS (=:40-46=); otherwise stays =null= | =1= for ="SELECT 1"= and ="INSERT 0 1"=; =null= for ="LOCK TABLE"= |
@@ -332,53 +332,53 @@ supported in pipeline mode"=; =end()= waits for =drain=. =[DOC apis/client]= nam
 | =fields=     | array of =Field= (2.6)    | from RowDescription (=:82-106=); =[]= when the command returned no row description | |
 | =rowAsArray= | boolean                   | =rowMode === 'array'=                                  | |
 
-Row objects =[SRC result.js:63-76,92-105]= =[OFFLINE]=: plain objects (prototype
+Row objects =(result.js:63-76,92-105)= =(offline)=: plain objects (prototype
 =Object.prototype=) with one key per column NAME in result order; duplicate column
 names collapse to the last value (one key). A NULL cell is JS =null=. A column with
 =format: 'binary'= is handed to the parser as a Buffer (=:69=).
 
-=rowCount= semantics =[DOC apis/result]=: rows affected by DML, rows retrieved for
+=rowCount= semantics =(docs apis/result)=: rows affected by DML, rows retrieved for
 SELECT/COPY; =null= for commands without a count (LOCK); never use it to test for an
 empty SELECT (=rows.length= instead).
 
 ** 2.6 The Field object
-=[SRC pg-protocol/dist/messages.js:61-71]=, parsed at =pg-protocol/dist/parser.js:209-218=,
-=[OFFLINE]=: constructor name =Field=, keys in order =name= (string), =tableID= (uint32,
+=(pg-protocol/dist/messages.js:61-71)=, parsed at =pg-protocol/dist/parser.js:209-218=,
+=(offline)=: constructor name =Field=, keys in order =name= (string), =tableID= (uint32,
 0 when not a table column), =columnID= (int16, 0 when not a table column),
 =dataTypeID= (uint32, the type OID), =dataTypeSize= (int16; -1 = variable),
 =dataTypeModifier= (int32; -1 = none), =format= (="text"= or ="binary"=).
-=[DOC apis/result]= documents only =name= and =dataTypeID=.
+=(docs apis/result)= documents only =name= and =dataTypeID=.
 
 ** 2.7 Multi-statement simple queries
-=[SRC query.js:60-71,136-150]= =[OFFLINE]=: ="SELECT 1; SELECT 2"= (no values, so simple
+=(query.js:60-71,136-150)= =(offline)=: ="SELECT 1; SELECT 2"= (no values, so simple
 protocol) resolves with an ARRAY of Result objects, one per command; a single statement
 resolves with one Result (not an array). With values the extended protocol forbids
 multiple statements (server error). pg-cljs must normalize this (11.2).
 
 ** 2.8 Client events
-=[SRC client.js]= — the Client is an =EventEmitter=:
+=(client.js)= — the Client is an =EventEmitter=:
 | Event          | Payload                                                       | When | Evidence |
 |----------------+---------------------------------------------------------------+------+----------|
 | =connect=      | none                                                          | first ReadyForQuery after startup | =:386= |
-| =error=        | =Error= (socket error, =DatabaseError= arriving with no active query, or =Error('Connection terminated unexpectedly')=) | an idle connection breaks; NOT emitted for errors of an active query (those reject the query) nor while connecting (those reject =connect=) | =:203-224,416-423,426-442= =[OFFLINE]= |
-| =end=          | none                                                          | once, after the socket closed (next tick), both after =end()= and after a breakage | =:226-228= =[OFFLINE]= |
+| =error=        | =Error= (socket error, =DatabaseError= arriving with no active query, or =Error('Connection terminated unexpectedly')=) | an idle connection breaks; NOT emitted for errors of an active query (those reject the query) nor while connecting (those reject =connect=) | =:203-224,416-423,426-442= =(offline)= |
+| =end=          | none                                                          | once, after the socket closed (next tick), both after =end()= and after a breakage | =:226-228= =(offline)= |
 | =notification= | =NotificationResponseMessage= (2.8.1)                          | a NOTIFY on a channel this connection LISTENs to | =:535-537= |
 | =notice=       | =NoticeMessage= (2.8.2)                                       | a server NOTICE/WARNING (e.g. =RAISE NOTICE=) | =:539-541= |
-| =drain=        | none                                                          | the query queue emptied after at least one query ran (fires after EVERY query in practice) | =:636-639= =[OFFLINE]= |
+| =drain=        | none                                                          | the query queue emptied after at least one query ran (fires after EVERY query in practice) | =:636-639= =(offline)= |
 
 An =error= event without a listener crashes the process (Node =EventEmitter= rule;
-=[DOC features/pooling]=). pg-cljs must always attach one (11.4).
+=(docs features/pooling)=). pg-cljs must always attach one (11.4).
 
 *** 2.8.1 Notification payload — verified
-=[SRC pg-protocol/dist/messages.js:117-126]=, parsed at =parser.js:195-200=
-=[OFFLINE]=: constructor =NotificationResponseMessage=, keys in order =length=
+=(pg-protocol/dist/messages.js:117-126)=, parsed at =parser.js:195-200=
+=(offline)=: constructor =NotificationResponseMessage=, keys in order =length=
 (message length, number), =processId= (number — lower-case =d=, NOT =processID= as on
 the Client), =channel= (string), =payload= (string; the empty string when NOTIFY had
 no payload — never =undefined= from the pure-JS parser, although the docs type it as
 optional), =name= = ="notification"=.
 
 *** 2.8.2 Notice payload — verified
-=[SRC messages.js:152-159]=, fields set at =parser.js:296-324= =[OFFLINE]=: constructor
+=(messages.js:152-159)=, fields set at =parser.js:296-324= =(offline)=: constructor
 =NoticeMessage=, NOT an =Error= instance (docs say "notice: Error"; the source says
 otherwise), keys =length=, =message=, =name= = ="notice"=, then the same 17 fields as
 a =DatabaseError= (8.1): =severity=, =code=, =detail=, =hint=, =position=,
@@ -386,7 +386,7 @@ a =DatabaseError= (8.1): =severity=, =code=, =detail=, =hint=, =position=,
 =constraint=, =file=, =line=, =routine= (absent ones are =undefined=).
 
 ** 2.9 =client.end()=
-=[SRC client.js:799-836]= =[OFFLINE]=: returns a Promise resolving with =undefined=
+=(client.js:799-836)= =(offline)=: returns a Promise resolving with =undefined=
 when the socket has closed (resolves on the connection's =end=, =:832-834=). Sends the
 Terminate message (=X=) then half-closes the socket (=connection.js:217-227=). Cases:
 - never connected, or already ended: resolves immediately, no socket (=:803-810=).
@@ -398,7 +398,7 @@ After =end()=: =query()= rejects ="Client was closed and is not queryable"= (=:7
 =connect()= rejects "already been connected" (2.3); =end()= again resolves.
 
 ** 2.10 Termination behavior matrix — verified
-=[SRC client.js:133-151,203-229,416-423,765-777]= =[OFFLINE]=:
+=(client.js:133-151,203-229,416-423,765-777)= =(offline)=:
 | Situation                                       | Active query               | Queued queries              | Events                               | Later =query()= |
 |-------------------------------------------------+----------------------------+-----------------------------+--------------------------------------+-----------------|
 | socket closes with no =end()= call              | rejects =Error('Connection terminated unexpectedly')= | same error, each | =error= (same Error), then =end= | rejects ="Client has encountered a connection error and is not queryable"= |
@@ -410,15 +410,15 @@ After =end()=: =query()= rejects ="Client was closed and is not queryable"= (=:7
 | connect fails                                   | —                          | queued queries reject with the same error | none (=connect= rejects) | not queryable |
 
 The rejection Error objects for terminations are plain =Error= with no extra own
-keys (=[OFFLINE]= =Object.keys(err)= is =[]=).
+keys (=(offline)= =Object.keys(err)= is =[]=).
 
 ** 2.11 Other members
 | Member                             | Evidence                 | Note |
 |------------------------------------+--------------------------+------|
-| =getTransactionStatus()=           | =[SRC client.js:795-797,390]= =[OFFLINE]= | ="I"= idle, ="T"= in transaction, ="E"= failed transaction, =null= before the first ReadyForQuery; from the last ReadyForQuery status byte |
+| =getTransactionStatus()=           | =(client.js:795-797,390)= =(offline)= | ="I"= idle, ="T"= in transaction, ="E"= failed transaction, =null= before the first ReadyForQuery; from the last ReadyForQuery status byte |
 | =processID=, =secretKey=           | =:368-371=               | from BackendKeyData; the notification =processId= of the same connection equals =processID= |
 | =setTypeParser(oid, format?, fn)=, =getTypeParser(oid, format)= | =:597-603=, =type-overrides.js= | per-client overrides (section 4.4) |
-| =escapeIdentifier(s)=, =escapeLiteral(s)= | =:608-614=, =utils.js:179-214= =[OFFLINE]= | =a"b= → ="a""b"=; =it's \ back= → = E'it''s \\ back'= (leading space, =E= prefix when a backslash is present); non-strings → ="''"= |
+| =escapeIdentifier(s)=, =escapeLiteral(s)= | =:608-614=, =utils.js:179-214= =(offline)= | =a"b= → ="a""b"=; =it's \ back= → = E'it''s \\ back'= (leading space, =E= prefix when a backslash is present); non-strings → ="''"= |
 | =ref()= / =unref()=                | =:787-793=               | socket ref; out of scope |
 | =cancel(client, query)=            | =:574-595=               | opens a SECOND connection and sends CancelRequest for the ACTIVE query; queued queries are dropped; out of scope (needs the Query object) |
 | =pipeline= (property)              | =:101=                   | read-only mirror of the option |
@@ -427,14 +427,14 @@ keys (=[OFFLINE]= =Object.keys(err)= is =[]=).
 
 * 3. Pool
 
-=pg.Pool= is =pg-pool= bound to the pure-JS Client =[SRC pg/lib/index.js:13-19,25]=;
-=[SRC pg-pool/index.js]= throughout.
+=pg.Pool= is =pg-pool= bound to the pure-JS Client =(pg/lib/index.js:13-19,25)=;
+=(pg-pool/index.js)= throughout.
 
 ** 3.1 Construction: =new Pool(options)=
-=[SRC pg-pool/index.js:67-109]=. The whole options object is passed to EVERY Client the
+=(pg-pool/index.js:67-109)=. The whole options object is passed to EVERY Client the
 pool creates (=:241=), so every Client option (2.1) is a Pool option, including
 =stream= (as a factory function, 9.1). =password= and =ssl.key= are hidden (=:71-87=).
-Pool-specific options and their defaults (=[OFFLINE]= confirmed the resolved values):
+Pool-specific options and their defaults (=(offline)= confirmed the resolved values):
 
 | Option                    | Default            | Meaning                                                                 | Evidence |
 |---------------------------+--------------------+-------------------------------------------------------------------------+----------|
@@ -448,22 +448,22 @@ Pool-specific options and their defaults (=[OFFLINE]= confirmed the resolved val
 | =log=                     | no-op              | =(message, ...args)= debug logger                                       | =:94= |
 | =Client=                  | the bound Client   | class used to create clients                                            | =:95= |
 | =Promise=                 | =global.Promise=   | out of scope                                                            | =:96= |
-| =onConnect=               | none               | =(client) => void|Promise=, run once per NEW client before it is handed out; a rejection destroys the client and rejects the waiting =connect= with that error (=[OFFLINE]= ="hook failed"=, =totalCount= 0) | =:288-304= =[DOC apis/pool]= |
+| =onConnect=               | none               | =(client) => void|Promise=, run once per NEW client before it is handed out; a rejection destroys the client and rejects the waiting =connect= with that error (=(offline)= ="hook failed"=, =totalCount= 0) | =:288-304= =(docs apis/pool)= |
 | =verify=                  | none               | =(client, cb)= callback-style check of new clients; undocumented        | =:347-363= |
 
 NOTE the default =idleTimeoutMillis= of the POOL is 10000, while =pg.defaults=
 says 30000 (=pg/lib/defaults.js:46=): =pg-pool= never reads =pg.defaults=; 10000 is
-what applies =[OFFLINE]=.
+what applies =(offline)=.
 
 ** 3.2 =pool.connect()= and =client.release(...)=
-=[SRC pg-pool/index.js:190-238,240-309,335-366,369-429]= =[OFFLINE]=:
+=(pg-pool/index.js:190-238,240-309,335-366,369-429)= =(offline)=:
 - resolves with a =Client= that carries a =release= function (=:342=); an idle client
   is handed out on =process.nextTick= (=:201-204=), a new one is created when the pool
   is not full, otherwise the request queues FIFO (=:207,231=).
 - =release()= returns =undefined= and returns the client to the idle set.
-- =release(err)= (truthy; =[DOC apis/pool]= documents it as =release(destroy?:
+- =release(err)= (truthy; =(docs apis/pool)= documents it as =release(destroy?:
   boolean)=): the client is ENDED and removed (=:392-398=); =true= works the same
-  (=[OFFLINE]= =totalCount= 0 after both).
+  (=(offline)= =totalCount= 0 after both).
 - a second =release()= on the same checkout THROWS synchronously
   ="Release called on client which has already been released to the pool."=
   (=:26-28,369-380=).
@@ -472,37 +472,37 @@ what applies =[OFFLINE]=.
   expired (=:392-405=).
 - while idle, a client =error= is caught by the pool's idle listener (=:51-64=): the
   client is removed and the pool emits =error(err, client)= with =err.client= set to
-  the client; =[OFFLINE]= observed =['error', 'socket died', client]= followed by
+  the client; =(offline)= observed =['error', 'socket died', client]= followed by
   =remove=.
 - after =pool.end()=, =connect()= rejects ="Cannot use a pool after calling end on the
   pool"= (=:191-194=).
 - queue wait timeout: rejects ="timeout exceeded when trying to connect"= (=:224=);
   new-client connect timeout: rejects ="Connection terminated due to connection
   timeout"= with =cause= (=:276=); a refused connection rejects with the socket
-  error (=[OFFLINE]= =ECONNREFUSED=, =totalCount= 0 afterwards).
+  error (=(offline)= =ECONNREFUSED=, =totalCount= 0 afterwards).
 
 ** 3.3 =pool.query(text, values)=
-=[SRC pg-pool/index.js:431-486]= =[OFFLINE]=: checks out a client, runs ONE query,
+=(pg-pool/index.js:431-486)= =(offline)=: checks out a client, runs ONE query,
 releases it and resolves with the Result. When the query fails the client is
-released WITH the error (=:474=), which removes it from the pool: =[OFFLINE]= after
+released WITH the error (=:474=), which removes it from the pool: =(offline)= after
 a =DatabaseError= the events were =release(err.code "42P01")= then =remove= and the
 counts went from =[1 1]= to =[0 0]=; so every failed =pool.query= costs a
 reconnect. A terminated connection rejects ="Connection terminated unexpectedly"=
 and the client is removed too. Not for transactions
-(=[DOC features/transactions]=: one client per transaction, BEGIN / COMMIT /
+(=(docs features/transactions)=: one client per transaction, BEGIN / COMMIT /
 ROLLBACK by the caller, release in =finally=). Passing a function as =text= rejects
 ="Passing a function as the first parameter to pool.query is not supported"=. The
-config-object form works too (=client.query= receives it unchanged; =[OFFLINE]=
+config-object form works too (=client.query= receives it unchanged; =(offline)=
 with a =values= array).
 
 ** 3.4 =pool.end()=
-=[SRC :488-499,127-145]= =[OFFLINE]=: resolves =undefined= after every client ended;
+=(:488-499,127-145)= =(offline)=: resolves =undefined= after every client ended;
 idle clients are ended at once, checked-out ones when released; a second =end()=
 rejects ="Called end on pool more than once"=; =query()= after =end()= rejects
 ="Cannot use a pool after calling end on the pool"=.
 
 ** 3.5 Pool events — verified order
-=[SRC :337,340,389,182,62]= =[OFFLINE]=:
+=(:337,340,389,182,62)= =(offline)=:
 | Event      | Payload              | When                                                        |
 |------------+----------------------+-------------------------------------------------------------|
 | =connect=  | =client=             | a NEW client connected (before =acquire=)                   |
@@ -512,7 +512,7 @@ rejects ="Called end on pool more than once"=; =query()= after =end()= rejects
 | =error=    | =err, client=        | an IDLE client errored (=err.client= is set); the client is already removed |
 
 ** 3.6 Counters
-=[SRC :501-515]= =[OFFLINE]=: =totalCount= (all clients), =idleCount= (idle),
+=(:501-515)= =(offline)=: =totalCount= (all clients), =idleCount= (idle),
 =waitingCount= (queued =connect= requests), =expiredCount= (clients past
 =maxLifetimeSeconds= still in the pool). Observed: =[0 0 0 0]= initially, =[1 0 0]=
 with one checked out, =[1 1 0]= after release, =[2 0 1]= with a waiter on =max 2=,
@@ -521,16 +521,16 @@ with one checked out, =[1 1 0]= after release, =[2 0 1]= with a waiter on =max 2
 * 4. Type mapping — PostgreSQL → JavaScript
 
 ** 4.1 Mechanism
-=[SRC pg/lib/result.js:82-106]=: for every field, a parser is looked up by
+=(pg/lib/result.js:82-106)=: for every field, a parser is looked up by
 =(dataTypeID, format)= through the query's =types= → the client's =TypeOverrides=
 (=type-overrides.js:30-33=) → the global =pg-types= registry. Unregistered OIDs get
 =noParse= = =String(value)= (=pg-types/index.js:17-31=) — i.e. the raw text. NULL
 cells never reach a parser (=result.js:68-73=).
 
 ** 4.2 Text-format parsers registered by default
-=[SRC pg-types/lib/textParsers.js:166-211]=, =[OFFLINE]= values observed through
+=(pg-types/lib/textParsers.js:166-211)=, =(offline)= values observed through
 =pg.types.getTypeParser(oid)= and through a full fake query:
-| OID  | PostgreSQL type           | JS value                                           | Observed =[OFFLINE]= |
+| OID  | PostgreSQL type           | JS value                                           | Observed =(offline)= |
 |------+---------------------------+----------------------------------------------------+----------------------|
 | 16   | bool                      | boolean (="t"= / ="true"= / ="y"= / ="yes"= / ="on"= / ="1"= / ="TRUE"= → true) | ="f"= → =false= |
 | 17   | bytea                     | =Buffer= (hex =\x…= and legacy escape formats)     | ="\\x0001ff"= → =<Buffer 00 01 ff>= |
@@ -563,16 +563,16 @@ cells never reach a parser (=result.js:68-73=).
 | 199 / 3807 | json[] / jsonb[]    | array of parsed JSON                               | |
 | 1017 | point[]                   | array of ={x,y}=                                   | |
 
-Binary-format parsers =[SRC pg-types/lib/binaryParsers.js:236-253]= exist for 20, 21,
+Binary-format parsers =(pg-types/lib/binaryParsers.js:236-253)= exist for 20, 21,
 23, 26, 1700, 700, 701, 16, 1114, 1184, 1000, 1007, 1016, 1008, 1009, 25 — used only
 with =binary: true= (out of scope).
 
 ** 4.3 Date parsing details
-=[SRC postgres-date/index.js:8-58,60-82,88-106]=: ="infinity"= / ="-infinity"= →
-=Infinity= / =-Infinity= (a NUMBER, not a Date; =[OFFLINE]=); a text with a zone
+=(postgres-date/index.js:8-58,60-82,88-106)=: ="infinity"= / ="-infinity"= →
+=Infinity= / =-Infinity= (a NUMBER, not a Date; =(offline)=); a text with a zone
 (=+00=, =Z=, =-05=, =+06:30=) is built with =Date.UTC= and shifted; a text WITHOUT a
 zone (=timestamp=, =date=) is built with the LOCAL-time constructor, so the resulting
-instant depends on =process.env.TZ= =[DOC features/types]=; years 0-99 and BC years
+instant depends on =process.env.TZ= =(docs features/types)=; years 0-99 and BC years
 are handled; microsecond digits are truncated to milliseconds.
 
 ** 4.4 Custom parsers
@@ -581,7 +581,7 @@ are handled; microsecond digits are truncated to milliseconds.
 - Per client: =client.setTypeParser(oid, format?, fn)= → =TypeOverrides=
   (=client.js:597-603=, =type-overrides.js:22-28=); or the =types= config option
   replacing the whole provider (=client.js:77=, =type-overrides.js:6=: the object must
-  implement =getTypeParser(oid, format)=; =[DOC features/queries]= shows
+  implement =getTypeParser(oid, format)=; =(docs features/queries)= shows
   ={getTypeParser: () => val => val}= to get raw strings).
 - Per query: the =types= query option (=query.js:17,28=; =result.js:98=).
 - =pg.defaults.parseInt8 = true= re-registers OID 20 and 1016 with the int4 parsers
@@ -592,7 +592,7 @@ are handled; microsecond digits are truncated to milliseconds.
   =TIMESTAMPTZ 1184=, =JSONB 3802=, =UUID 2950=, …). Array OIDs are NOT in it.
 
 * 5. Connection string format
-=[SRC pg-connection-string/index.js:8-161]= =[OFFLINE]=:
+=(pg-connection-string/index.js:8-161)= =(offline)=:
 - =postgres://= or =postgresql://= =[user[:password]@][host][:port][/database][?params]=;
   parsed with WHATWG =URL=; =user= / =password= are percent-decoded (="p%40ss"= →
   ="p@ss"=); IPv6 host in brackets is unbracketed (="[::1]"= → ="::1"=).
@@ -600,7 +600,7 @@ are handled; microsecond digits are truncated to milliseconds.
   =options= (percent-encoded), =client_encoding=, =host= / =port= / =user= /
   =password= as params override the URL parts, =sslmode=, =ssl=, =sslcert=, =sslkey=,
   =sslrootcert=, =uselibpqcompat=, =sslnegotiation=, and anything else (passed to the
-  Client config unchanged, so e.g. =?application_name=app= works; =[OFFLINE]=).
+  Client config unchanged, so e.g. =?application_name=app= works; =(offline)=).
 - No host: ="postgresql:///db"= → host falls back to env/default ="localhost"=.
 - Unix socket: a string beginning with =/= is ="<dir> <database>"= (=:10-13=:
   ="/var/run/postgresql mydb"=); the =socket:= scheme ="socket:/dir?db=…&encoding=…"=
@@ -608,18 +608,18 @@ are handled; microsecond digits are truncated to milliseconds.
 - SSL params (section 6): =ssl=true= / =ssl=1= → =true=; =ssl=0= → =false=;
   =ssl=no-verify= → ={rejectUnauthorized: false}= (applied in
   =connection-parameters.js:93-95=); any of =sslmode= / =sslcert= / =sslkey= /
-  =sslrootcert= REPLACES =ssl= with a fresh object (=:77-79=; =[DOC features/ssl]=
+  =sslrootcert= REPLACES =ssl= with a fresh object (=:77-79=; =(docs features/ssl)=
   "Beware! The ssl object is overwritten"); =sslcert= / =sslkey= / =sslrootcert= READ
   FILES synchronously (=:90-100=); =sslmode=disable= → =false=; =verify-full= → ={}=
   (full verification); =prefer= / =require= / =verify-ca= → ={}= as well, PLUS a
   one-time process warning that they are treated as =verify-full= until pg 9
-  (=:144-152,219-231=; =[OFFLINE]= warning seen); =no-verify= →
+  (=:144-152,219-231=; =(offline)= warning seen); =no-verify= →
   ={rejectUnauthorized: false}=; with =uselibpqcompat=true= the libpq semantics apply
   (=require= → =rejectUnauthorized: false=, =verify-ca= needs a CA, =:106-137=).
 - Error input is redacted in thrown =URL= errors (=:33-37=).
 
 * 6. SSL configuration
-=[SRC connection-parameters.js:85-112]= =[SRC connection.js:67-135]= =[DOC features/ssl]=:
+=(connection-parameters.js:85-112)= =(connection.js:67-135)= =(docs features/ssl)=:
 =ssl= may be =false= (plain), =true= (TLS with full verification against the system
 CAs), or an object passed to =tls.connect= (=ca=, =key=, =cert=, =rejectUnauthorized=,
 =servername=, …; =key= hidden from logs). Negotiation: the =SSLRequest= handshake by
@@ -629,18 +629,18 @@ connections"=, any other byte ="There was an error establishing an SSL connectio
 17+). SNI is set only for non-IP hosts (=connection.js:121-125=).
 
 * 7. LISTEN/NOTIFY mechanics
-=[DOC apis/client]= =[SRC client.js:271,535-537]= =[OFFLINE]=:
+=(docs apis/client)= =(client.js:271,535-537)= =(offline)=:
 - A connection subscribes with a normal query ="LISTEN <channel>"= and unsubscribes
   with ="UNLISTEN <channel>"= / ="UNLISTEN *"=; the server pushes
   =NotificationResponse= messages asynchronously on THAT connection, which the Client
   re-emits as the =notification= event with the payload of 2.8.1.
 - Sending: ="NOTIFY <channel>, 'payload'"= or =SELECT pg_notify($1, $2)= (the latter
   takes parameters; channel names in =NOTIFY= are identifiers and cannot be bound).
-  A notification sent by the same connection is delivered to it too (=[OFFLINE]= the
+  A notification sent by the same connection is delivered to it too (=(offline)= the
   fake pushed it while the =NOTIFY= ran; it arrived before the query resolved).
 - Notifications can arrive at ANY time, including between queries and during one;
   they are not tied to a query result.
-- Pool caveat =[DOC apis/pool]=: a LISTEN belongs to one physical connection; a pooled
+- Pool caveat =(docs apis/pool)=: a LISTEN belongs to one physical connection; a pooled
   client that is released may be ended (idle timeout, =maxUses=) and the subscription
   with it; with =pool.query= each call may use a different client. A dedicated
   =Client= (or a checked-out pooled client that is never released while listening) is
@@ -651,8 +651,8 @@ connections"=, any other byte ="There was an error establishing an SSL connectio
 * 8. Errors
 
 ** 8.1 =DatabaseError= — verified shape
-=[SRC pg-protocol/dist/messages.js:36-42]=, fields assigned at
-=parser.js:296-324= =[OFFLINE]=: =class DatabaseError extends Error=;
+=(pg-protocol/dist/messages.js:36-42)=, fields assigned at
+=parser.js:296-324= =(offline)=: =class DatabaseError extends Error=;
 =instanceof pg.DatabaseError= and =instanceof Error= both hold; =name= is the string
 ="error"=; =message= is the server's =M= field. Own enumerable keys (in order):
 =length=, =name=, =severity=, =code=, =detail=, =hint=, =position=, =internalPosition=,
@@ -668,11 +668,11 @@ Observed: ={code "42P01", severity "ERROR", position "15"}= and a unique-violati
 constraint "users_pkey"}=.
 
 A =DatabaseError= rejects the query it belongs to and does not touch the connection;
-the transaction status becomes ="E"= inside a transaction (server rule) — =[OFFLINE]=
+the transaction status becomes ="E"= inside a transaction (server rule) — =(offline)=
 outside a transaction it stayed ="I"=.
 
 ** 8.2 Socket / Node errors
-Plain Node errors propagate unchanged: =ECONNREFUSED= =[OFFLINE]= ={code:
+Plain Node errors propagate unchanged: =ECONNREFUSED= =(offline)= ={code:
 "ECONNREFUSED", errno: -61, syscall: "connect", address: "127.0.0.1", port: 9,
 message: "connect ECONNREFUSED 127.0.0.1:9"}=; likewise =ENOTFOUND=, =ETIMEDOUT=,
 =ECONNRESET=, TLS errors (=CERT_*=, =DEPTH_ZERO_SELF_SIGNED_CERT=). =ECONNRESET= /
@@ -709,13 +709,13 @@ message: "connect ECONNREFUSED 127.0.0.1:9"}=; likewise =ENOTFOUND=, =ETIMEDOUT=
 | =Called end on pool more than once=                                      | | =:491= |
 
 * 9. The fake-socket seam and the wire messages a fake needs
-=[SRC pg/lib/connection.js:19-22]=: =new Client({stream})= accepts a Duplex stream or a
+=(pg/lib/connection.js:19-22)=: =new Client({stream})= accepts a Duplex stream or a
 FUNCTION =(connectionConfig) => Duplex=; the Pool forwards the same option to each
 Client, so a factory serves pools. The Client calls =stream.setNoDelay(true)=,
 =stream.connect(port, host)= (or the socket path) and waits for =connect=;
 =setKeepAlive=, =ref=, =unref=, =cork=/=uncork= (optional), =destroy=, =end= and the
 =close= event (→ Client =end=) are used (=connection.js:40-65=, =client.js:169-182=).
-=[OFFLINE]= the real Client ran the whole protocol against such a fake. The fake must
+=(offline)= the real Client ran the whole protocol against such a fake. The fake must
 answer: startup → =R= AuthenticationOk (int32 0), =K= BackendKeyData, =Z=
 ReadyForQuery('I'); a simple query =Q= → =T= RowDescription, =D= DataRow*, =C=
 CommandComplete('SELECT n'), =Z=; the extended sequence =P B D E S= → =1= ParseComplete,
@@ -723,8 +723,8 @@ CommandComplete('SELECT n'), =Z=; the extended sequence =P B D E S= → =1= Pars
 cstrings, =\0= terminated) then =Z=; notices =N=; notifications =A= (int32 pid, cstring
 channel, cstring payload); =X= Terminate → close. Responses must be pushed
 asynchronously (=setImmediate=), as a socket would; synchronous pushes inside =_write=
-desynchronize the client (=[OFFLINE]= "Received unexpected rowDescription"). The
-Phase 1 test fake is this table-driven socket, which exercises the real =pg= code
+desynchronize the client (=(offline)= "Received unexpected rowDescription"). The
+test fake is this table-driven socket, which exercises the real =pg= code
 end-to-end without a server.
 
 * 10. Uncertain / needs verification (settle-later plans)
@@ -732,10 +732,10 @@ end-to-end without a server.
 |---+-------------+------|
 | 10.1 | =PGCONNECT_TIMEOUT= is read into =connect_timeout= but the pure-JS client's timer is driven by =connectionTimeoutMillis= only (=client.js:116=); the env var therefore appears to have NO effect on the JS client. | Documented as "read by =pg= but not honored by the JavaScript client: set =:connection-timeout-ms=" in the README env table and the manual. The live smoke does not probe a black-holed address (it opens no connection the caller did not configure); the source reading stands. |
 | 10.2 | After a =query_timeout= rejection in non-pipeline mode, is the connection usable for the NEXT query only once the server finishes the timed-out statement (no cancel is sent)? Source reading says yes (=client.js:719-730= removes only unsent queries). | The live smoke (=dev/pg_cljs/smoke.cljs=, check "query read timeout") runs =SELECT pg_sleep(1)= with =:query-timeout-ms 200= and measures how long the next query on that connection waits; it passes only when the wait exceeds 500 ms. pg-cljs documents =:query-timeout-ms= as "client-side give-up, the statement keeps running" (README settings table, manual gotcha). |
-| 10.3 | (settled =[OFFLINE]=) =pool.query= after a =DatabaseError= releases the client with the error and the pool REMOVES it (=release= then =remove= events, counts =[0 0]=). | None: pg-cljs documents that a failed =pool-query= costs a reconnect. |
+| 10.3 | (settled =(offline)=) =pool.query= after a =DatabaseError= releases the client with the error and the pool REMOVES it (=release= then =remove= events, counts =[0 0]=). | None: pg-cljs documents that a failed =pool-query= costs a reconnect. |
 | 10.4 | =numeric[]= (OID 1231) parses to =parseFloat= numbers while scalar =numeric= is a string — a precision trap in upstream. | pg-cljs documents it and offers a per-client parser override example; no default override (house rule). |
-| 10.5 | (settled =[OFFLINE]=) =notification.payload= for a =NOTIFY= without payload is the empty STRING =""=, never =undefined=, from the pure-JS parser (a cstring is always read). | None; pg-cljs passes the value through. A live check is still worthwhile in the smoke for the native-free path only. |
-| 10.6 | (settled =[OFFLINE]=) =rowCount= for a =SELECT= returning no rows is =0= (tag ="SELECT 0"= → =0=), =rows= =[]=, =fields= populated; =null= only for tags without a count (LOCK). | None. |
+| 10.5 | (settled =(offline)=) =notification.payload= for a =NOTIFY= without payload is the empty STRING =""=, never =undefined=, from the pure-JS parser (a cstring is always read). | None; pg-cljs passes the value through. A live check is still worthwhile in the smoke for the native-free path only. |
+| 10.6 | (settled =(offline)=) =rowCount= for a =SELECT= returning no rows is =0= (tag ="SELECT 0"= → =0=), =rows= =[]=, =fields= populated; =null= only for tags without a count (LOCK). | None. |
 | 10.7 | The exact =DatabaseError= =severity= for localized servers (=S= is localized, =V= is not since PostgreSQL 9.6; the parser keeps =fields.S=). | Note only; a live check on a non-English server is not planned. |
 | 10.8 | The =connect= event vs the =connect()= promise order: the callback runs BEFORE =emit('connect')= (=client.js:380-386=), so a =connect= listener attached after =await connect()= misses it. | pg-cljs does not expose =connect= as an event (the promise is the signal). |
 | 10.9 | pg 8.23 deprecation warnings (query queueing, pgpass, custom Promise, activeQuery) print once per process via =util.deprecate=; which ones a pg-cljs consumer can trigger. | The library avoids every deprecated path. The examples run (=node target/examples.js=, every README example end to end against the fake) was observed to print no warning; the examples test does not hook the process =warning= event (that would be interop outside the binding), so this stays an observation of the run, not an assertion. |
@@ -755,13 +755,13 @@ a generic kebab→camel rule:
 | =:application-name=                  | =application_name=                     |
 | =:fallback-application-name=         | =fallback_application_name=            |
 | =:options=                           | =options=                              |
-| =:statement-timeout-ms= =:lock-timeout-ms= =:idle-in-transaction-session-timeout-ms= =:query-timeout-ms= | =statement_timeout= =lock_timeout= =idle_in_transaction_session_timeout= =query_timeout= (all milliseconds upstream; the =-ms= suffix is the house convention for millisecond options — corrected in Phase 1 from the =-millis= / bare spellings this table first had) |
+| =:statement-timeout-ms= =:lock-timeout-ms= =:idle-in-transaction-session-timeout-ms= =:query-timeout-ms= | =statement_timeout= =lock_timeout= =idle_in_transaction_session_timeout= =query_timeout= (all milliseconds upstream; the =-ms= suffix is the convention for every millisecond option) |
 | =:connection-timeout-ms=             | =connectionTimeoutMillis=              |
 | =:keep-alive= =:keep-alive-initial-delay-ms= | =keepAlive= =keepAliveInitialDelayMillis= |
 | =:stream=                            | =stream= (the fake-socket seam of section 9; a Duplex or a factory function) |
 | =:types=                             | =types=                                |
-| =:max= =:min= =:max-uses= =:max-lifetime-seconds= =:idle-timeout-ms= =:allow-exit-on-idle= | =max= =min= =maxUses= =maxLifetimeSeconds= =idleTimeoutMillis= =allowExitOnIdle= (Phase 2: =-ms= as for every millisecond option; =:connection-timeout-ms= is the same client key, which pg-pool also uses as the queue-wait timeout) |
-| (not offered)                        | =onConnect= / =verify= / =log= / =Client= / =Promise= / =poolSize=: Phase 2 decision — =onConnect= and =verify= are JavaScript callback hooks that receive the RAW pg Client before it is handed out; wrapping them would put a JS object in caller code (no interop at call sites) or require a second handle construction path for a client the pool still owns. A caller who needs per-connection setup runs it on the client =acquire!= hands out (or in =with-client!=). =log= is a debug hook, =Client= / =Promise= swap implementations, =poolSize= is the legacy spelling of =max=. An unknown key is a =config-error= before anything is sent. |
+| =:max= =:min= =:max-uses= =:max-lifetime-seconds= =:idle-timeout-ms= =:allow-exit-on-idle= | =max= =min= =maxUses= =maxLifetimeSeconds= =idleTimeoutMillis= =allowExitOnIdle= (=-ms= as for every millisecond option; =:connection-timeout-ms= is the same client key, which pg-pool also uses as the queue-wait timeout) |
+| (not offered)                        | =onConnect= / =verify= / =log= / =Client= / =Promise= / =poolSize=: =onConnect= and =verify= are JavaScript callback hooks that receive the RAW pg Client before it is handed out; wrapping them would put a JS object in caller code (no interop at call sites) or require a second handle construction path for a client the pool still owns. A caller who needs per-connection setup runs it on the client =acquire!= hands out (or in =with-client!=). =log= is a debug hook, =Client= / =Promise= swap implementations, =poolSize= is the legacy spelling of =max=. An unknown key is a =config-error= before anything is sent. |
 | query: =:text= =:values= =:name= =:row-mode= =:types= =:query-timeout-ms= | =text= =values= =name= =rowMode= =types= =query_timeout= |
 | result: =:command= =:row-count= =:oid= =:rows= =:fields= | =command= =rowCount= =oid= =rows= =fields= |
 | field: =:name= =:table-id= =:column-id= =:data-type-id= =:data-type-size= =:data-type-modifier= =:format= | =name= =tableID= =columnID= =dataTypeID= =dataTypeSize= =dataTypeModifier= =format= |
@@ -769,7 +769,7 @@ a generic kebab→camel rule:
 | error / notice: =:severity= =:code= =:detail= =:hint= =:position= =:internal-position= =:internal-query= =:where= =:schema= =:table= =:column= =:data-type= =:constraint= =:file= =:line= =:routine= =:message= | camelCase names of 8.1 |
 
 Row objects: column NAMES are the caller's own SQL output names (aliases) and are
-user data, not wire codes. Phase 1 decision (implemented): rows are maps keyed by the
+user data, not wire codes. Rows are maps keyed by the
 EXACT column-name STRINGS =pg= yields (="price_cents"=, ="my col"=), never re-cased
 or keywordized; =:row-mode :array= is opt-in (rows as vectors) and the map form is
 the default, as upstream. Column VALUES are never re-cased or re-typed (int8 and
@@ -791,9 +791,10 @@ queue queries on one client beyond what the caller does (2.4.3 deprecation); the
 docs say one query at a time per client, sequence with =p/let= or use the pool.
 
 ** 11.4 Events and channels
-Phase 2 decision (implemented): still NO library =error= listener on Clients or
-Pools (upstream EventEmitter semantics stay upstream semantics; the pool and
-listen docstrings say so and point at =pg-cljs.binding/on=). =notification=
+The library attaches NO =error= listener of its own on Clients or Pools: upstream
+EventEmitter semantics stay upstream semantics (an unhandled =error= event throws),
+the pool and listen docstrings say so and point at =pg-cljs.binding/on=, and tests
+subscribe through the binding's =on= / =once= / =off= helpers. =notification=
 becomes a core.async channel PER LISTEN NAME through =pg-cljs.listen/listen!=
 (sliding buffer 1024, =:buffer-size= option, oldest dropped; the name is sent
 quoted with =escapeIdentifier= so it is matched exactly; =unlisten!= sends
@@ -802,21 +803,9 @@ UNLISTEN and closes; the channel closes on =end=). =notice= is a SEPARATE channe
 LISTEN name, so it is not mixed into a notification channel. No pool events
 channel: the five pool events are reachable with =binding/on= on =(:js pool)=;
 a channel for them is deferred until a caller needs one.
-Phase 1 decision (supersedes the next sentence for now): the library attaches NO
-=error= listener of its own; upstream EventEmitter semantics stay upstream semantics
-(an unhandled =error= event throws), tests subscribe through the binding's =on= /
-=once= / =off= helpers, and the events / notifications channel design of Phase 2
-decides where the listener lives. Original plan: the binding attaches an =error=
-listener to every Client and Pool it creates (an unhandled =error= event crashes
-Node). =notification= (and optionally =notice=) become
-a core.async channel per client with a sliding buffer of 1024 by default
-(=:buffer= option), delivering the kebab maps of 11.1; =end= closes the channel.
-Pool events surface as one events channel per pool with =:event= =:connect= /
-=:acquire= / =:release= / =:remove= / =:error= maps.
 
 ** 11.5 Errors
-Phase 1 decision (implemented, replaces the Phase 0 sketch that followed): ONE
-taxonomy, =:type= under =:pg-cljs/=: =config-error= (bad / unknown config key, wrong
+ONE taxonomy, =:type= under =:pg-cljs/=: =config-error= (bad / unknown config key, wrong
 argument shape — a bare string command, =:values= not a vector, a CLJS map among the
 values, a non-client handle; raised BEFORE anything is sent; data =:message= plus
 =:arg= / =:value= / =:unknown= / =:allowed= / =:index= / =:op=), =connect-error=
@@ -828,16 +817,15 @@ queryable"= / ="… has encountered a connection error …"= when a query is att
 data =:message :cause :op= plus the upstream fields present), =query-error= (a
 =DatabaseError= rejecting a query — every 8.1 field keywordized, =:code= the SQLSTATE
 string verbatim — and ="Query read timeout"=; data =:message :cause :op= plus the
-fields present), =unsupported-error= (not Node.js). Pool errors (Phase 2,
-implemented): no new type. "Cannot use a pool after calling end on the pool",
+fields present), =unsupported-error= (not Node.js). Pool errors: no new
+type. "Cannot use a pool after calling end on the pool",
 "timeout exceeded when trying to connect", "Connection terminated due to
 connection timeout" and "Called end on pool more than once" are =connect-error=
 (the pool or a connection is gone / unobtainable; =:op= =:acquire= / =:query= /
 =:end=); a failed =pool.query= is classified exactly as a client =query!=; a
 second =release!= of one checkout and a =release!= of a non-pooled client are
 =config-error= (refused before upstream's synchronous throw).
-Phase 0 sketch, for the record: =database-error=, =connection-error=, =pool-error=,
-=argument-error=, =config-error=. Synchronous upstream throws (2.4.1, 2.1,
-3.2) are caught and rejected / rethrown as these. No default type-parser override
+Synchronous upstream throws (2.4.1, 2.1, 3.2) are caught and rejected / rethrown
+as these types. No default type-parser override
 (=parseInt8= stays off), no retries, no invented timeouts: every timeout is the
 caller's option with upstream's default (none).
